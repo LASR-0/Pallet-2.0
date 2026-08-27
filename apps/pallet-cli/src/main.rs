@@ -7,8 +7,9 @@
 //! bind = CTRL SHIFT, P, exec, pallet pick
 //! ```
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use pallet_color::{Color, Harmony, Space, contrast, naming, ramp};
 use pallet_core::{Paths, logging};
 
 #[derive(Debug, Parser)]
@@ -30,6 +31,10 @@ enum Command {
     Convert {
         /// A colour in any supported notation, e.g. `#A5236E`.
         value: String,
+        /// Compute harmony and ramps in HSL, as the prototype did, rather than
+        /// in perceptually uniform Oklch.
+        #[arg(long)]
+        hsl: bool,
     },
     /// Show where Pallet keeps its configuration and library.
     Paths,
@@ -47,8 +52,66 @@ fn main() -> Result<()> {
             println!("exports {}", paths.exports_dir().display());
         }
         Command::Pick => anyhow::bail!("`pallet pick` lands in M4"),
-        Command::Convert { .. } => anyhow::bail!("`pallet convert` lands in M1"),
+        Command::Convert { value, hsl } => {
+            let color = Color::parse_hex(&value)
+                .with_context(|| format!("could not read `{value}` as a colour"))?;
+            let space = if hsl { Space::Hsl } else { Space::Oklch };
+            print_current(color, space);
+        }
     }
 
     Ok(())
+}
+
+/// Render what the Current screen shows, for one colour.
+fn print_current(color: Color, space: Space) {
+    let (r, g, b) = color.to_rgb();
+    let (h, s, l) = color.to_hsl();
+    let name = naming::nearest(color);
+
+    println!("{}", color.to_hex());
+    if let Some(m) = &name {
+        let qualifier = if m.exact { "exact" } else { "nearest" };
+        println!("  {}  ({qualifier}, dE {:.1})", m.named.name, m.distance);
+    }
+    println!();
+    println!("  HEX  {}", color.to_hex());
+    println!("  RGB  {r} · {g} · {b}");
+    println!(
+        "  HSL  {}° · {}% · {}%",
+        h.round(),
+        (s * 100.0).round(),
+        (l * 100.0).round()
+    );
+
+    let white = Color::new(255, 255, 255);
+    let black = Color::new(0, 0, 0);
+    println!();
+    println!("CONTRAST");
+    for (label, other) in [("on white", white), ("on black", black)] {
+        let ratio = contrast::wcag21_ratio(color, other);
+        println!(
+            "  {label}   WCAG {ratio:.2}:1 {:<8}  APCA {:+.1}",
+            contrast::WcagLevel::of(ratio).label(),
+            contrast::apca_lc(color, other)
+        );
+    }
+
+    println!();
+    println!("HARMONY  ({})", space.id());
+    for harmony in Harmony::ALL {
+        let swatches: Vec<String> = harmony
+            .swatches(color, space)
+            .iter()
+            .map(|c| c.to_hex())
+            .collect();
+        println!("  {:<7} {}", harmony.label(), swatches.join("  "));
+    }
+
+    println!();
+    println!("TINTS & SHADES  ({})", space.id());
+    for swatch in ramp::ramp(color, space) {
+        let marker = if swatch.is_base { " ←" } else { "" };
+        println!("  {:>3}  {}{marker}", swatch.step, swatch.color.to_hex());
+    }
 }

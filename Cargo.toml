@@ -46,7 +46,6 @@ clap = { version = "4.6.6", features = ["derive"] }
 
 # --- colour (M1) ---
 palette = "0.7.7"
-deltae = "0.3.2"
 
 # --- storage (M2) ---
 rusqlite = { version = "0.40.2", features = ["bundled"] }
