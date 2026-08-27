@@ -1,0 +1,21 @@
+[package]
+name = "pallet-picker"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Resident overlay helper: holds a warm GPU context, captures and renders the loupe."
+
+[[bin]]
+name = "pallet-picker"
+path = "src/main.rs"
+
+[dependencies]
+pallet-core.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

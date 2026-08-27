@@ -1,0 +1,15 @@
+[package]
+name = "pallet-overlay"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "GPU loupe overlay renderer."
+
+[dependencies]
+thiserror.workspace = true
+
+[lints]
+workspace = true

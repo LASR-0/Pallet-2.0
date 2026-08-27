@@ -1,0 +1,15 @@
+[package]
+name = "pallet-ipc"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Framed IPC protocol between the Pallet app, picker and CLI."
+
+[dependencies]
+thiserror.workspace = true
+
+[lints]
+workspace = true

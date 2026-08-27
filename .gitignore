@@ -1,0 +1,21 @@
+/target
+**/*.rs.bk
+
+# frontend
+node_modules/
+ui/dist/
+.pnpm-store/
+
+# tauri
+apps/pallet-app/gen/
+apps/pallet-app/target/
+
+# local runtime state
+.pallet-home/
+*.db
+*.db-wal
+*.db-shm
+
+# os
+.DS_Store
+Thumbs.db

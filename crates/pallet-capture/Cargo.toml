@@ -1,0 +1,15 @@
+[package]
+name = "pallet-capture"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Cross-platform screen capture with colour-space provenance."
+
+[dependencies]
+thiserror.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,22 @@
+[package]
+name = "pallet-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Pallet command line: pick, convert, export."
+
+[[bin]]
+name = "pallet"
+path = "src/main.rs"
+
+[dependencies]
+pallet-core.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

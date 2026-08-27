@@ -1,0 +1,96 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/pallet-color",
+    "crates/pallet-store",
+    "crates/pallet-export",
+    "crates/pallet-capture",
+    "crates/pallet-overlay",
+    "crates/pallet-hotkey",
+    "crates/pallet-ipc",
+    "crates/pallet-core",
+    "apps/pallet-cli",
+    "apps/pallet-picker",
+]
+# apps/pallet-app (Tauri) joins the workspace at M6, once ui/ exists.
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+license = "MIT OR Apache-2.0"
+authors = ["Luke Roxburgh"]
+repository = "https://github.com/lukeroxburgh/pallet"
+
+[workspace.dependencies]
+# --- internal ---
+pallet-color = { path = "crates/pallet-color" }
+pallet-store = { path = "crates/pallet-store" }
+pallet-export = { path = "crates/pallet-export" }
+pallet-capture = { path = "crates/pallet-capture" }
+pallet-overlay = { path = "crates/pallet-overlay" }
+pallet-hotkey = { path = "crates/pallet-hotkey" }
+pallet-ipc = { path = "crates/pallet-ipc" }
+pallet-core = { path = "crates/pallet-core" }
+
+# --- foundations (M0) ---
+thiserror = "2.0.20"
+anyhow = "1.0.104"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+toml = "1.1"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+directories = "6.0.0"
+clap = { version = "4.6.6", features = ["derive"] }
+
+# --- colour (M1) ---
+palette = "0.7.7"
+deltae = "0.3.2"
+
+# --- storage (M2) ---
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+refinery = { version = "0.9.2", features = ["rusqlite"] }
+time = { version = "0.3.55", features = ["formatting", "parsing", "serde"] }
+uuid = { version = "1.26.0", features = ["v4", "serde"] }
+
+# --- capture + overlay (M3/M4) ---
+wgpu = "30.0.1"
+winit = "0.30.13"
+raw-window-handle = "0.6.2"
+bytemuck = { version = "1.25.2", features = ["derive"] }
+pollster = "1.0.1"
+image = { version = "0.25.10", default-features = false, features = ["png"] }
+
+# --- platform: linux ---
+smithay-client-toolkit = "0.21.1"
+ashpd = "0.13.13"
+x11rb = "0.14.0"
+
+# --- platform: windows ---
+windows = "0.62.2"
+
+# --- platform: macos ---
+objc2-screen-capture-kit = "0.3.2"
+
+# --- integration (M5) ---
+arboard = "3.6.1"
+global-hotkey = "0.8.0"
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+todo = "warn"
+dbg_macro = "warn"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
+
+# The picker must feel instant even in dev builds.
+[profile.dev.package."*"]
+opt-level = 2

@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Karla:wght@400;500;600;700&family=Sora:wght@400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+.pl-scroll::-webkit-scrollbar { width: 9px }
+.pl-scroll::-webkit-scrollbar-thumb { background: rgba(128,128,128,.32); border-radius: 9px }
+.pl-scroll::-webkit-scrollbar-track { background: transparent }
+</style>
+</helmet>
+<div style="{{ shellStyle }}">
+  <div style="display:flex;flex-direction:column;width:100%;height:100%;overflow:hidden;border-radius:var(--rad,12px);background:var(--bg,#FBF6ED);color:var(--ink,#2A2724);font-family:var(--font,'Instrument Sans'),system-ui,sans-serif;box-shadow:var(--shadow,0 24px 60px -20px rgba(0,0,0,.4));border:1px solid var(--edge,rgba(0,0,0,.1))">
+
+    <!-- title bar -->
+    <div style="display:flex;align-items:center;gap:10px;height:40px;flex:none;padding:0 6px 0 13px;background:var(--chrome,#FFFDF8);border-bottom:1px solid var(--line,rgba(0,0,0,.08))">
+      <div style="display:grid;grid-template-columns:repeat(2,4px);grid-template-rows:repeat(2,4px);gap:2px">
+        <div style="background:var(--accent,#E8564C);border-radius:1px"></div>
+        <div style="background:var(--accent,#E8564C);opacity:.45;border-radius:1px"></div>
+        <div style="background:var(--accent,#E8564C);opacity:.6;border-radius:1px"></div>
+        <div style="background:var(--accent,#E8564C);opacity:.22;border-radius:1px"></div>
+      </div>
+      <span style="font:700 12px/1 var(--font,sans-serif);letter-spacing:.16em">PALLET</span>
+      <span style="font:400 10.5px/1 var(--mono,'IBM Plex Mono'),monospace;color:var(--mute,rgba(0,0,0,.42));letter-spacing:.04em">2.0</span>
+      <div style="flex:1"></div>
+      <div style="display:flex;gap:2px">
+        <div style="width:30px;height:26px;display:grid;place-items:center;border-radius:6px;color:var(--mute,rgba(0,0,0,.45))" style-hover="background:var(--hover,rgba(0,0,0,.06))"><div style="width:9px;height:1px;background:currentColor"></div></div>
+        <div style="width:30px;height:26px;display:grid;place-items:center;border-radius:6px;color:var(--mute,rgba(0,0,0,.45));font:400 13px/1 var(--font,sans-serif)" style-hover="background:var(--accent,#E8564C);color:#fff">✕</div>
+      </div>
+    </div>
+
+    <!-- tabs -->
+    <div style="display:flex;gap:3px;flex:none;padding:9px 10px;background:var(--chrome,#FFFDF8);border-bottom:1px solid var(--line,rgba(0,0,0,.08))">
+      <sc-for list="{{ tabs }}" as="tab" hint-placeholder-count="6">
+        <div onClick="{{ tab.go }}" style="{{ tab.style }}">{{ tab.label }}</div>
+      </sc-for>
+    </div>
+
+    <div class="pl-scroll" style="flex:1;min-height:0;overflow-y:auto;padding:14px 14px 18px">
+
+      <!-- CURRENT -->
+      <sc-if value="{{ isCurrent }}" hint-placeholder-val="{{ true }}">
+        <div style="display:flex;flex-direction:column;gap:14px">
+          <div style="position:relative;height:138px;border-radius:var(--rad2,10px);overflow:hidden;background:{{ hexVal }};box-shadow:inset 0 0 0 1px rgba(0,0,0,.09)">
+            <div style="position:absolute;left:14px;bottom:12px;display:flex;flex-direction:column;gap:3px;color:{{ onColor }}">
+              <span style="font:400 9.5px/1 var(--mono,'IBM Plex Mono'),monospace;letter-spacing:.16em;opacity:.65">CURRENT</span>
+              <span style="font:600 26px/1 var(--mono,'IBM Plex Mono'),monospace;letter-spacing:.01em">{{ hexVal }}</span>
+            </div>
+            <div style="position:absolute;right:12px;top:12px;padding:5px 9px;border-radius:7px;font:500 10px/1 var(--mono,'IBM Plex Mono'),monospace;letter-spacing:.06em;background:rgba(255,255,255,.22);backdrop-filter:blur(6px);color:{{ onColor }}">{{ nameVal }}</div>
+          </div>
+
+          <div style="display:flex;flex-direction:column;gap:1px;border-radius:var(--rad2,10px);overflow:hidden;background:var(--line,rgba(0,0,0,.08))">
+            <sc-for list="{{ codeRows }}" as="row" hint-placeholder-count="3">
+              <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--panel,#fff)" style-hover="background:var(--panelHi,#fff)">
+                <span style="width:34px;font:400 9.5px/1 var(--mono,'IBM Plex Mono'),monospace;letter-spacing:.12em;color:var(--mute,rgba(0,0,0,.42))">{{ row.label }}</span>
+                <span style="flex:1;font:500 12.5px/1 var(--mono,'IBM Plex Mono'),monospace;letter-spacing:.03em">{{ row.value }}</span>
+                <span style="padding:4px 8px;border-radius:6px;font:400 9.5px/1 var(--mono,'IBM Plex Mono'),monospace;letter-spacing:.08em;color:var(--mute,rgba(0,0,0,.42));border:1px solid var(--line,rgba(0,0,0,.1))" style-hover="color:var(--accent,#E8564C);border-color:var(--accent,#E8564C)">COPY</span>
+              </div>
+            </sc-for>
+          </div>
+
+          <div style="display:flex;flex-direction:column;gap:9px">
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="font:400 9.5px/1 var(--mono,'IBM Plex Mono'),monospace;letter-spacing:.14em;color:var(--mute,rgba(0,0,0,.42))">HARMONY</span>
+              <div style="flex:1;height:1px;background:var(--line,rgba(0,0,0,.08))"></div>
+            </div>
+            <div style="display:flex;gap:4px">
+              <sc-for list="{{ harmonies }}" as="h" hint-placeholder-count="4">
+                <div onClick="{{ h.go }}" style="{{ h.style }}">{{ h.label }}</div>
+              </sc-for>
+            </div>
+            <div style="display:flex;gap:7px">
+              <sc-for list="{{ harmonySwatches }}" as="s" hint-placeholder-count="4">
+                <div onClick="{{ s.go }}" style="flex:1;display:flex;flex-direction:column;gap:5px;cursor:pointer">
+                  <div style="height:56px;border-radius:8px;background:{{ s.hex }};box-shadow:inset 0 0 0 1px rgba(0,0,0,.09)"></div>
+                  <span style="font:400 9px/1 var(--mono,'IBM Plex Mono'),monospace;letter-spacing:.02em;color:var(--mute,rgba(0,0,0,.45));text-align:center">{{ s.hex }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+
+          <div style="display:flex;flex-direction:column;gap:9px">
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="font:400 9.5px/1 var(--mono,'IBM Plex Mono'),monospace;letter-spacing:.14em;color:var(--mute,rgba(0,0,0,.42))">TINTS &amp; SHADES</span>
+              <div style="flex:1;height:1px;background:var(--line,rgba(0,0,0,.08))"></div>
+            </div>
+            <div style="display:flex;border-radius:8px;overflow:hidden;box-shadow:inset 0 0 0 1px rgba(0,0,0,.09)">
+              <sc-for list="{{ ramp }}" as="r" hint-placeholder-count="9">
+                <div onClick="{{ r.go }}" style="flex:1;height:44px;cursor:pointer;background:{{ r.hex }}"></div>
+              </sc-for>
+            </div>
+            <div style="display:flex">
+              <sc-for list="{{ ramp }}" as="r" hint-placeholder-count="9">
+                <span style="flex:1;text-align:center;font:400 8px/1 var(--mono,'IBM Plex Mono'),monospace;color:var(--mute,rgba(0,0,0,.38))">{{ r.step }}</span>
+              </sc-for>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+
+      <!-- PALETTES -->
+      <sc-if value="{{ isPalettes }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;flex-direction:column;gap:12px">
+          <div style="display:flex;align-items:center;gap:9px;padding:10px 12px;border-radius:8px;border:1px solid var(--line,rgba(0,0,0,.12));background:var(--panel,#fff)">
+            <span style="font:400 10px/1 var(--mono,'IBM Plex Mono'),monospace;letter-spacing:.14em;color:var(--mute,rgba(0,0,0,.42))">LIBRARY : PALETTES</span>
+            <div style="flex:1"></div>
+            <span style="font:400 10px/1 var(--mono,'IBM Plex Mono'),monospace;color:var(--mute,rgba(0,0,0,.35))">12</span>
+          </div>
+          <sc-for list="{{ palettes }}" as="p" hint-placeholder-count="3">
+            <div style="display:flex;flex-direction:column;gap:8px;padding:11px;border-radius:var(--rad2,10px);background:var(--panel,#fff);border:1px solid var(--line,rgba(0,0,0,.07))" style-hover="border-color:var(--accent,#E8564C)">
+              <div style="display:flex;border-radius:7px;overflow:hidden;height:72px;box-shadow:inset 0 0 0 1px rgba(0,0,0,.07)">
+                <sc-for list="{{ p.colors }}" as="c" hint-placeholder-count="5">
+                  <div onClick="{{ c.go }}" style="flex:1;cursor:pointer;background:{{ c.hex }}"></div>
+                </sc-for>
+              </div>
+              <div style="display:flex;align-items:baseline;gap:7px">
+                <span style="font:400 9px/1 var(--mono,'IBM Plex Mono'),monospace;color:var(--mute,rgba(0,0,0,.35))">{{ p.num }}</span>
+                <span style="font:500 12px/1 var(--font,sans-serif)">{{ p.name }}</span>
+                <div style="flex:1"></div>
+                <span style="font:400 9px/1 var(--mono,'IBM Plex Mono'),monospace;letter-spacing:.08em;color:var(--mute,rgba(0,0,0,.35))">{{ p.meta }}</span>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+      </sc-if>
+
+      <!-- COLOURS -->
+      <sc-if value="{{ isColours }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;flex-direction:column;gap:12px">
+          <div style="display:flex;align-items:center;gap:9px;padding:10px 12px;border-radius:8px;border:1px solid var(--line,rgba(0,0,0,.12));background:var(--panel,#fff)">
+            <span style="font:400 10px/1 var(--mono,'IBM Plex Mono'),monospace;letter-spacing:.14em;color:var(--mute,rgba(0,0,0,.42))">LIBRARY : COLOURS</span>
+            <div style="flex:1"></div>
+            <span style="font:400 10px/1 var(--mono,'IBM Plex Mono'),monospace;color:var(--mute,rgba(0,0,0,.35))">48</span>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">
+            <sc-for list="{{ colours }}" as="c" hint-placeholder-count="9">
+              <div onClick="{{ c.go }}" style="display:flex;flex-direction:column;align-items:center;gap:6px;padding:12px 6px 10px;border-radius:var(--rad2,10px);background:var(--panel,#fff);border:1px solid var(--line,rgba(0,0,0,.07));cursor:pointer" style-hover="border-color:var(--accent,#E8564C)">
+                <div style="width:46px;height:46px;border-radius:50%;background:{{ c.hex }};box-shadow:inset 0 0 0 1px rgba(0,0,0,.08)"></div>
+                <span style="font:500 10.5px/1.2 var(--font,sans-serif);text-align:center;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ c.name }}</span>
+                <span style="font:400 9px/1 var(--mono,'IBM Plex Mono'),monospace;color:var(--mute,rgba(0,0,0,.4))">{{ c.hex }}</span>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </sc-if>
+
+      <!-- BUILD -->
+      <sc-if value="{{ isBuild }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;flex-direction:column;gap:14px">
+          <div style="display:flex;align-items:center;gap:9px;padding:10px 12px;border-radius:8px;border:1px solid var(--line,rgba(0,0,0,.12));background:var(--panel,#fff)">
+            <span style="font:400 10px/1 var(--mono,'IBM Plex Mono'),monospace;letter-spacing:.14em;color:var(--mute,rgba(0,0,0,.42))">PALETTE :</span>
+            <span style="font:500 12px/1 var(--font,sans-serif)">Untitled 13</span>
+          </div>
+          <div style="display:flex;gap:8px;height:180px">
+            <sc-for list="{{ buildSlots }}" as="s" hint-placeholder-count="5">
+              <div style="{{ s.style }}">
+                <span style="font:500 9px/1 var(--mono,'IBM Plex Mono'),monospace;letter-spacing:.04em;writing-mode:vertical-rl;color:{{ s.label }}">{{ s.text }}</span>
+              </div>
+            </sc-for>
+          </div>
+          <div style="display:flex;gap:8px">
+            <div onClick="{{ goPick }}" style="flex:1;padding:11px;text-align:center;border-radius:8px;background:var(--accent,#E8564C);color:#fff;font:500 11.5px/1 var(--font,sans-serif);letter-spacing:.03em;cursor:pointer">Pick next colour</div>
+            <div style="padding:11px 14px;text-align:center;border-radius:8px;border:1px solid var(--line,rgba(0,0,0,.14));font:500 11.5px/1 var(--font,sans-serif);color:var(--mute,rgba(0,0,0,.55));cursor:pointer" style-hover="border-color:var(--accent,#E8564C);color:var(--accent,#E8564C)">Save</div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:7px;padding-top:2px">
+            <span style="font:400 9.5px/1 var(--mono,'IBM Plex Mono'),monospace;letter-spacing:.14em;color:var(--mute,rgba(0,0,0,.42))">EXPORT</span>
+            <div style="display:flex;gap:6px;flex-wrap:wrap">
+              <sc-for list="{{ exports }}" as="e" hint-placeholder-count="4">
+                <span style="padding:6px 10px;border-radius:999px;border:1px solid var(--line,rgba(0,0,0,.12));font:400 10px/1 var(--mono,'IBM Plex Mono'),monospace;color:var(--mute,rgba(0,0,0,.5));cursor:pointer" style-hover="border-color:var(--accent,#E8564C);color:var(--accent,#E8564C)">{{ e }}</span>
+              </sc-for>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+
+      <!-- PICK (idle) -->
+      <sc-if value="{{ isPick }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;flex-direction:column;gap:16px">
+          <div onClick="{{ noop }}" style="display:flex;flex-direction:column;align-items:center;gap:12px;padding:30px 16px;border-radius:var(--rad2,10px);background:var(--panel,#fff);border:1px dashed var(--line,rgba(0,0,0,.18));cursor:pointer" style-hover="border-color:var(--accent,#E8564C)">
+            <div style="position:relative;width:64px;height:64px;border-radius:50%;background:conic-gradient(from 0deg,#E8564C,#E0BC67,#289788,#3B5F86,#6E5A78,#E8564C);box-shadow:inset 0 0 0 6px var(--panel,#fff)">
+              <div style="position:absolute;left:50%;top:50%;width:15px;height:15px;transform:translate(-50%,-50%);box-shadow:0 0 0 1.5px var(--ink,#2A2724)"></div>
+            </div>
+            <div style="display:flex;flex-direction:column;align-items:center;gap:4px">
+              <span style="font:600 14px/1 var(--font,sans-serif)">Freeze the screen and pick</span>
+              <span style="font:400 11px/1.4 var(--font,sans-serif);color:var(--mute,rgba(0,0,0,.5));text-align:center">The loupe magnifies 16× with a pixel grid.<br>Hold Shift to average a 5×5 area.</span>
+            </div>
+            <span style="padding:6px 11px;border-radius:7px;background:var(--hover,rgba(0,0,0,.05));font:500 10px/1 var(--mono,'IBM Plex Mono'),monospace;letter-spacing:.08em;color:var(--mute,rgba(0,0,0,.6))">CTRL + SHIFT + P</span>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:9px">
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="font:400 9.5px/1 var(--mono,'IBM Plex Mono'),monospace;letter-spacing:.14em;color:var(--mute,rgba(0,0,0,.42))">RECENT PICKS</span>
+              <div style="flex:1;height:1px;background:var(--line,rgba(0,0,0,.08))"></div>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:6px">
+              <sc-for list="{{ recents }}" as="r" hint-placeholder-count="12">
+                <div onClick="{{ r.go }}" style="aspect-ratio:1;border-radius:7px;cursor:pointer;background:{{ r.hex }};box-shadow:inset 0 0 0 1px rgba(0,0,0,.08)"></div>
+              </sc-for>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+
+      <!-- SETTINGS -->
+      <sc-if value="{{ isSettings }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;flex-direction:column;gap:1px;border-radius:var(--rad2,10px);overflow:hidden;background:var(--line,rgba(0,0,0,.08))">
+          <sc-for list="{{ settings }}" as="s" hint-placeholder-count="6">
+            <div style="display:flex;align-items:center;gap:10px;padding:12px 12px;background:var(--panel,#fff)">
+              <div style="flex:1;display:flex;flex-direction:column;gap:3px">
+                <span style="font:500 12px/1 var(--font,sans-serif)">{{ s.label }}</span>
+                <span style="font:400 10px/1.3 var(--font,sans-serif);color:var(--mute,rgba(0,0,0,.45))">{{ s.hint }}</span>
+              </div>
+              <span style="{{ s.ctrlStyle }}">{{ s.ctrl }}</span>
+            </div>
+          </sc-for>
+        </div>
+      </sc-if>
+
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:440,&quot;height&quot;:640},&quot;theme&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;sketchbook&quot;,&quot;studio&quot;],&quot;default&quot;:&quot;sketchbook&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;screen&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;pick&quot;,&quot;current&quot;,&quot;palettes&quot;,&quot;colours&quot;,&quot;build&quot;,&quot;settings&quot;],&quot;default&quot;:&quot;current&quot;,&quot;tsType&quot;:&quot;string&quot;}}">
+const THEMES = {
+  sketchbook: {
+    '--bg': '#F7F2E9', '--panel': '#FFFCF6', '--panelHi': '#FFFFFC', '--chrome': '#F2EADC',
+    '--ink': '#3A342C', '--mute': 'rgba(58,52,44,.46)', '--line': 'rgba(58,52,44,.08)',
+    '--edge': 'rgba(58,52,44,.07)', '--hover': 'rgba(58,52,44,.045)', '--accent': '#C87D5B',
+    '--rad': '20px', '--rad2': '16px', '--font': "'Karla'", '--mono': "'DM Mono'",
+    '--shadow': '0 20px 44px -18px rgba(90,70,50,.3)'
+  },
+  studio: {
+    '--bg': '#262A2B', '--panel': '#2F3435', '--panelHi': '#39403F', '--chrome': '#202425',
+    '--ink': '#EFEDE6', '--mute': 'rgba(239,237,230,.44)', '--line': 'rgba(239,237,230,.09)',
+    '--edge': 'rgba(239,237,230,.08)', '--hover': 'rgba(239,237,230,.06)', '--accent': '#9FC7A6',
+    '--rad': '22px', '--rad2': '18px', '--font': "'Sora'", '--mono': "'DM Mono'",
+    '--shadow': '0 24px 52px -20px rgba(0,0,0,.6)'
+  }
+};
+
+const PALETTES = [
+  { num: '01', name: 'Winter Sunset', meta: '5 · 2019', hexes: ['#F9A08A', '#F0657A', '#B76C7E', '#6E5A78', '#3B5F86'] },
+  { num: '02', name: 'Bussel', meta: '5 · 2019', hexes: ['#8FB593', '#FCCB95', '#F96A5B', '#DC3B4E', '#22333B'] },
+  { num: '03', name: 'Glasshouse', meta: '5 · 2020', hexes: ['#A8E6CF', '#DCEDC1', '#FFD3B6', '#FFAAA5', '#FF8B94'] },
+  { num: '04', name: 'Rob Roy', meta: '5 · 2021', hexes: ['#E0BC67', '#C9736A', '#8C4B54', '#3F3244', '#1E2430'] }
+];
+
+const COLOURS = [
+  { name: 'Dim Red', hex: '#C05060' }, { name: 'Karry', hex: '#FFECD3' }, { name: 'Atomic Tangerine', hex: '#FEA465' },
+  { name: 'Crusta', hex: '#FC7643' }, { name: 'Apple Blossom', hex: '#AF4F41' }, { name: 'Freckled Bluewood', hex: '#273148' },
+  { name: 'Blue Dianne', hex: '#254350' }, { name: 'Jungle Green', hex: '#289788' }, { name: 'Rob Roy', hex: '#E0BC67' }
+];
+
+const RECENTS = ['#A5236E', '#5ADC91', '#FC7643', '#273148', '#E0BC67', '#289788', '#C05060', '#FFECD3', '#6E5A78', '#3B5F86', '#F96A5B', '#8FB593'];
+
+function hexToRgb(h) {
+  const n = parseInt(h.slice(1), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+function rgbToHex(r, g, b) {
+  return '#' + [r, g, b].map(v => Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, '0')).join('').toUpperCase();
+}
+function rgbToHsl(r, g, b) {
+  r /= 255; g /= 255; b /= 255;
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
+  let h = 0;
+  if (d) {
+    if (mx === r) h = ((g - b) / d) % 6;
+    else if (mx === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    h *= 60; if (h < 0) h += 360;
+  }
+  const l = (mx + mn) / 2;
+  const s = d ? d / (1 - Math.abs(2 * l - 1)) : 0;
+  return [h, s, l];
+}
+function hslToHex(h, s, l) {
+  h = ((h % 360) + 360) % 360; s = Math.max(0, Math.min(1, s)); l = Math.max(0, Math.min(1, l));
+  const c = (1 - Math.abs(2 * l - 1)) * s, x = c * (1 - Math.abs((h / 60) % 2 - 1)), m = l - c / 2;
+  let rgb;
+  if (h < 60) rgb = [c, x, 0]; else if (h < 120) rgb = [x, c, 0]; else if (h < 180) rgb = [0, c, x];
+  else if (h < 240) rgb = [0, x, c]; else if (h < 300) rgb = [x, 0, c]; else rgb = [c, 0, x];
+  return rgbToHex((rgb[0] + m) * 255, (rgb[1] + m) * 255, (rgb[2] + m) * 255);
+}
+
+class Component extends DCLogic {
+  state = { screen: 'current', hex: '#A5236E', name: 'Disco', harmony: 'complementary' };
+
+  set(hex, name) { this.setState({ hex: hex.toUpperCase(), name: name || 'Sampled', screen: 'current' }); }
+
+  renderVals() {
+    const theme = THEMES[this.props.theme] || THEMES.sketchbook;
+    const shellStyle = Object.keys(theme).map(k => k + ':' + theme[k]).join(';') + ';width:100%;height:100%';
+    const screen = this.props.screen && !this.state.touched ? this.props.screen : this.state.screen;
+
+    const hex = this.state.hex;
+    const [r, g, b] = hexToRgb(hex);
+    const [h, s, l] = rgbToHsl(r, g, b);
+    const onColor = l > 0.62 ? 'rgba(0,0,0,.78)' : 'rgba(255,255,255,.94)';
+
+    const tabs = [
+      ['pick', 'Pick'], ['current', 'Current'], ['palettes', 'Palettes'],
+      ['colours', 'Colours'], ['build', 'Build'], ['settings', '⚙']
+    ].map(([id, label]) => {
+      const on = screen === id;
+      return {
+        key: id, label,
+        go: () => this.setState({ screen: id, touched: true }),
+        style: 'padding:6px 9px;border-radius:7px;cursor:pointer;white-space:nowrap;font:' +
+          (on ? '600' : '400') + ' 11px/1 var(--font,sans-serif);letter-spacing:.01em;' +
+          (on
+            ? 'background:var(--accent,#E8564C);color:#fff;'
+            : 'color:var(--mute,rgba(0,0,0,.5));')
+      };
+    });
+
+    const HSETS = {
+      complementary: [0, 180],
+      analogous: [-30, 0, 30, 60],
+      triadic: [0, 120, 240],
+      split: [0, 150, 210]
+    };
+    const harmonies = [['complementary', 'Comp'], ['analogous', 'Analog'], ['triadic', 'Triad'], ['split', 'Split']]
+      .map(([id, label]) => {
+        const on = this.state.harmony === id;
+        return {
+          key: id, label,
+          go: () => this.setState({ harmony: id }),
+          style: 'flex:1;text-align:center;padding:6px 4px;border-radius:6px;cursor:pointer;font:' +
+            (on ? '600' : '400') + ' 10px/1 var(--font,sans-serif);' +
+            (on ? 'background:var(--hover,rgba(0,0,0,.06));color:var(--ink,#2A2724);' : 'color:var(--mute,rgba(0,0,0,.45));') +
+            'border:1px solid ' + (on ? 'var(--line,rgba(0,0,0,.14))' : 'transparent')
+        };
+      });
+
+    const harmonySwatches = HSETS[this.state.harmony].map((d, i) => {
+      const hx = d === 0 ? hex : hslToHex(h + d, s, l);
+      return { key: i, hex: hx, go: () => this.set(hx, 'Harmony') };
+    });
+
+    const ramp = [0.94, 0.86, 0.74, 0.62, l, Math.max(0.06, l * 0.78), Math.max(0.05, l * 0.6), Math.max(0.04, l * 0.42), Math.max(0.03, l * 0.26)]
+      .map((ll, i) => {
+        const hx = hslToHex(h, s, ll);
+        return { key: i, hex: hx, step: [50, 100, 200, 300, 400, 500, 600, 700, 800][i], go: () => this.set(hx, 'Shade') };
+      });
+
+    const buildBase = ['#A5236E', '#E31E4D', '#F1682A'];
+    const buildSlots = [0, 1, 2, 3, 4].map(i => {
+      const filled = i < buildBase.length;
+      return {
+        key: i,
+        text: filled ? buildBase[i] : (i === buildBase.length ? 'PICKING…' : 'EMPTY'),
+        label: filled ? 'rgba(255,255,255,.85)' : 'var(--mute,rgba(0,0,0,.4))',
+        style: 'flex:1;display:flex;align-items:flex-end;justify-content:center;padding-bottom:10px;border-radius:var(--rad2,10px);cursor:pointer;' +
+          (filled
+            ? 'background:' + buildBase[i] + ';box-shadow:inset 0 0 0 1px rgba(0,0,0,.1);'
+            : 'border:1px dashed ' + (i === buildBase.length ? 'var(--accent,#E8564C)' : 'var(--line,rgba(0,0,0,.18))') + ';')
+      };
+    });
+
+    return {
+      shellStyle, tabs, harmonies, harmonySwatches, ramp, buildSlots,
+      isPick: screen === 'pick', isCurrent: screen === 'current', isPalettes: screen === 'palettes',
+      isColours: screen === 'colours', isBuild: screen === 'build', isSettings: screen === 'settings',
+      hexVal: hex, nameVal: this.state.name, onColor,
+      codeRows: [
+        { key: 'hex', label: 'HEX', value: hex },
+        { key: 'rgb', label: 'RGB', value: r + ' · ' + g + ' · ' + b },
+        { key: 'hsl', label: 'HSL', value: Math.round(h) + '° · ' + Math.round(s * 100) + '% · ' + Math.round(l * 100) + '%' }
+      ],
+      palettes: PALETTES.map(p => ({
+        key: p.num, num: p.num, name: p.name, meta: p.meta,
+        colors: p.hexes.map((hx, i) => ({ key: i, hex: hx, go: () => this.set(hx, p.name) }))
+      })),
+      colours: COLOURS.map(c => ({ key: c.hex, name: c.name, hex: c.hex, go: () => this.set(c.hex, c.name) })),
+      recents: RECENTS.map((hx, i) => ({ key: i, hex: hx, go: () => this.set(hx, 'Recent') })),
+      exports: ['CSS vars', 'Tailwind', 'ASE', 'JSON', 'PNG'],
+      goPick: () => this.setState({ screen: 'pick', touched: true }),
+      noop: () => this.setState({ screen: 'pick', touched: true }),
+      settings: [
+        { key: 1, label: 'Global pick shortcut', hint: 'Freezes the screen from anywhere', ctrl: 'CTRL + SHIFT + P' },
+        { key: 2, label: 'Loupe zoom', hint: 'Magnification at rest', ctrl: '16×' },
+        { key: 3, label: 'Copy on pick', hint: 'Puts hex on the clipboard immediately', ctrl: 'ON' },
+        { key: 4, label: 'Multi-pick length', hint: 'Colours gathered in one pass', ctrl: '5' },
+        { key: 5, label: 'Name new colours', hint: 'Matches the nearest named colour', ctrl: 'ON' },
+        { key: 6, label: 'Stay on top', hint: 'Window floats above other apps', ctrl: 'OFF' }
+      ].map(s => Object.assign({}, s, {
+        ctrlStyle: 'padding:5px 9px;border-radius:6px;font:500 9.5px/1 \'IBM Plex Mono\',monospace;letter-spacing:.07em;' +
+          (s.ctrl === 'ON'
+            ? 'background:var(--accent,#E8564C);color:#fff;'
+            : 'background:var(--hover,rgba(0,0,0,.05));color:var(--mute,rgba(0,0,0,.55));')
+      }))
+    };
+  }
+}
+</script>
+</body>
+</html>
