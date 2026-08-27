@@ -15,6 +15,7 @@ path = "src/main.rs"
 [dependencies]
 pallet-core.workspace = true
 pallet-color.workspace = true
+pallet-store.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 tracing.workspace = true

@@ -9,7 +9,15 @@ repository.workspace = true
 description = "Persistence for Pallet: SQLite library plus TOML settings."
 
 [dependencies]
+pallet-color.workspace = true
 thiserror.workspace = true
+serde.workspace = true
+toml.workspace = true
+tracing.workspace = true
+rusqlite.workspace = true
+rusqlite_migration.workspace = true
+time.workspace = true
+uuid.workspace = true
 
 [lints]
 workspace = true

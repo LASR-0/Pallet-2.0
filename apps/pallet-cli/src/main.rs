@@ -11,6 +11,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use pallet_color::{Color, Harmony, Space, contrast, naming, ramp};
 use pallet_core::{Paths, logging};
+use pallet_store::{Config, Store};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -38,6 +39,8 @@ enum Command {
     },
     /// Show where Pallet keeps its configuration and library.
     Paths,
+    /// Create the config file and library, seeding the sample palettes.
+    Init,
 }
 
 fn main() -> Result<()> {
@@ -50,6 +53,39 @@ fn main() -> Result<()> {
             println!("config  {}", paths.config_file().display());
             println!("library {}", paths.database_file().display());
             println!("exports {}", paths.exports_dir().display());
+
+            let loaded = Config::load(&paths.config_file());
+            for warning in &loaded.warnings {
+                eprintln!("warning: {warning}");
+            }
+
+            if paths.database_file().exists() {
+                let store = Store::open(&paths.database_file())?;
+                println!();
+                println!("library  schema v{}", store.schema_version()?);
+                println!("         {} colours", store.colours()?.len());
+                println!("         {} palettes", store.palettes()?.len());
+                println!(
+                    "         {} recent picks",
+                    store.recent_picks(usize::MAX)?.len()
+                );
+            }
+        }
+        Command::Init => {
+            let paths = Paths::from_env_or_discover()?;
+            paths.ensure_dirs()?;
+
+            let config_path = paths.config_file();
+            if !config_path.exists() {
+                Config::default().save(&config_path)?;
+                println!("wrote {}", config_path.display());
+            }
+
+            let store = Store::open(&paths.database_file())?;
+            if pallet_store::seed::seed_if_empty(&store)? {
+                println!("seeded the library with the sample palettes");
+            }
+            println!("library ready at {}", paths.database_file().display());
         }
         Command::Pick => anyhow::bail!("`pallet pick` lands in M4"),
         Command::Convert { value, hsl } => {
