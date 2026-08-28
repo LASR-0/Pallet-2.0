@@ -1,0 +1,30 @@
+[package]
+name = "pallet-app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "The Pallet window: colour library, palettes and exports."
+
+[[bin]]
+name = "pallet-app"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+pallet-color.workspace = true
+pallet-core.workspace = true
+pallet-store.workspace = true
+pallet-ipc.workspace = true
+tauri = { version = "2", features = ["tray-icon"] }
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+anyhow.workspace = true
+
+[lints]
+workspace = true

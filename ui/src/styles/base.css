@@ -1,0 +1,70 @@
+@import "./fonts.css";
+@import "./tokens.css";
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  /* The window itself is transparent so the shell's rounded corners and
+     shadow read against the desktop rather than against a square backdrop. */
+  background: transparent;
+}
+
+body {
+  font-family: var(--font), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* A desktop window, not a web page: no text selection or right-click menu
+     except where explicitly allowed. */
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+#app {
+  width: 100%;
+  height: 100%;
+}
+
+/* Scrollbar, verbatim from the prototype's .pl-scroll rules. */
+.pl-scroll::-webkit-scrollbar {
+  width: 9px;
+}
+.pl-scroll::-webkit-scrollbar-thumb {
+  background: rgba(128, 128, 128, 0.32);
+  border-radius: 9px;
+}
+.pl-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* The prototype expresses hover as a `style-hover` attribute on each element.
+   These classes reproduce those exact declarations. */
+.hv-chrome:hover {
+  background: var(--hover);
+}
+.hv-close:hover {
+  background: var(--accent);
+  color: #fff;
+}
+.hv-row:hover {
+  background: var(--panelHi);
+}
+.hv-copy:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.hv-card:hover {
+  border-color: var(--accent);
+}
+
+.clickable {
+  cursor: pointer;
+}

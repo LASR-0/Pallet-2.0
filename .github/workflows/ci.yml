@@ -24,14 +24,33 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
 
-      # Wayland/X11 headers for pallet-capture and pallet-overlay.
+      # Wayland/X11 headers for pallet-capture and pallet-overlay, plus the
+      # WebKitGTK stack Tauri links against.
       - name: Install Linux dependencies
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             libwayland-dev libxkbcommon-dev libx11-dev libxcb1-dev \
-            libxrandr-dev libgbm-dev pkg-config
+            libxrandr-dev libgbm-dev pkg-config \
+            libwebkit2gtk-4.1-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev \
+            libgtk-3-dev librsvg2-dev
+
+      # `tauri::generate_context!` embeds the built frontend at compile time,
+      # and ui/dist is not committed, so the frontend must be built first or
+      # pallet-app will not compile.
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: ui/pnpm-lock.yaml
+      - name: Build the frontend
+        run: |
+          pnpm --dir ui install --frozen-lockfile
+          pnpm --dir ui build
 
       - name: Format
         run: cargo fmt --all -- --check

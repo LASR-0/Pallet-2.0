@@ -1,0 +1,44 @@
+/*
+ * Theme tokens, copied verbatim from the prototype's THEMES object in
+ * `Prototype/package/Pallet Window.dc.html`.
+ *
+ * These values are the design. They are not to be "improved", rounded or
+ * unified: the two themes deliberately differ in corner radius and typeface as
+ * well as colour, and the prototype is the reference for how the window looks.
+ */
+
+:root[data-theme="sketchbook"] {
+  --bg: #f7f2e9;
+  --panel: #fffcf6;
+  --panelHi: #fffffc;
+  --chrome: #f2eadc;
+  --ink: #3a342c;
+  --mute: rgba(58, 52, 44, 0.46);
+  --line: rgba(58, 52, 44, 0.08);
+  --edge: rgba(58, 52, 44, 0.07);
+  --hover: rgba(58, 52, 44, 0.045);
+  --accent: #c87d5b;
+  --rad: 20px;
+  --rad2: 16px;
+  --font: "Karla";
+  --mono: "DM Mono";
+  --shadow: 0 20px 44px -18px rgba(90, 70, 50, 0.3);
+}
+
+:root[data-theme="studio"] {
+  --bg: #262a2b;
+  --panel: #2f3435;
+  --panelHi: #39403f;
+  --chrome: #202425;
+  --ink: #efede6;
+  --mute: rgba(239, 237, 230, 0.44);
+  --line: rgba(239, 237, 230, 0.09);
+  --edge: rgba(239, 237, 230, 0.08);
+  --hover: rgba(239, 237, 230, 0.06);
+  --accent: #9fc7a6;
+  --rad: 22px;
+  --rad2: 18px;
+  --font: "Sora";
+  --mono: "DM Mono";
+  --shadow: 0 24px 52px -20px rgba(0, 0, 0, 0.6);
+}

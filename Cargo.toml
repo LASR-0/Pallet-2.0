@@ -11,8 +11,8 @@ members = [
     "crates/pallet-core",
     "apps/pallet-cli",
     "apps/pallet-picker",
+    "apps/pallet-app",
 ]
-# apps/pallet-app (Tauri) joins the workspace at M6, once ui/ exists.
 
 [workspace.package]
 version = "0.1.0"

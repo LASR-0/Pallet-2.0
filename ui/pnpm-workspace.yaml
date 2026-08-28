@@ -1,0 +1,5 @@
+# esbuild ships a platform-specific binary via a postinstall script, and vite
+# cannot build without it. Approved explicitly rather than by disabling pnpm's
+# build-script guard wholesale.
+allowBuilds:
+  esbuild: true
