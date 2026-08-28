@@ -65,6 +65,19 @@ pub enum Transform {
     Flipped(u16),
 }
 
+impl Transform {
+    /// Whether this transform exchanges the width and height axes.
+    pub fn swaps_axes(self) -> bool {
+        matches!(
+            self,
+            Transform::Rotate90
+                | Transform::Rotate270
+                | Transform::Flipped(90)
+                | Transform::Flipped(270)
+        )
+    }
+}
+
 /// A connected display.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Monitor {
@@ -94,25 +107,42 @@ pub struct Monitor {
 }
 
 impl Monitor {
+    /// The framebuffer's size expressed in the *displayed* orientation.
+    ///
+    /// `wlr-screencopy` hands back the raw, untransformed framebuffer, so on a
+    /// display rotated 90 or 270 degrees the buffer is 1920x1080 while the
+    /// image the user sees is 1080x1920. Comparing logical geometry against the
+    /// raw buffer would produce a meaningless "scale" — 1920/1080 = 1.778 for
+    /// an unscaled rotated display — so the axes are swapped first.
+    fn displayed_size(&self) -> (u32, u32) {
+        if self.transform.swaps_axes() {
+            (self.pixel_height, self.pixel_width)
+        } else {
+            (self.pixel_width, self.pixel_height)
+        }
+    }
+
     /// Physical pixels per logical unit, horizontally.
     ///
     /// Derived from the two geometries rather than read from `wl_output.scale`,
     /// which reports only an integer (2 for a 1.5 scale) and so cannot describe
     /// fractional scaling at all.
     pub fn scale_x(&self) -> f64 {
+        let (w, _) = self.displayed_size();
         if self.logical_width == 0 {
             1.0
         } else {
-            f64::from(self.pixel_width) / f64::from(self.logical_width)
+            f64::from(w) / f64::from(self.logical_width)
         }
     }
 
     /// Physical pixels per logical unit, vertically.
     pub fn scale_y(&self) -> f64 {
+        let (_, h) = self.displayed_size();
         if self.logical_height == 0 {
             1.0
         } else {
-            f64::from(self.pixel_height) / f64::from(self.logical_height)
+            f64::from(h) / f64::from(self.logical_height)
         }
     }
 
@@ -125,23 +155,59 @@ impl Monitor {
     }
 
     /// Map a **logical** desktop point to a **physical** pixel in this
-    /// display's framebuffer.
+    /// display's captured framebuffer.
     ///
-    /// The result is clamped to the framebuffer, because rounding at the far
-    /// edge of a fractionally scaled display can otherwise land one pixel past
-    /// the end.
+    /// Two corrections happen here, and both are invisible on an unrotated,
+    /// unscaled desktop:
+    ///
+    /// 1. Logical units are scaled to device pixels.
+    /// 2. The output's rotation is undone, because the captured buffer is the
+    ///    raw framebuffer rather than the upright image the user sees.
+    ///
+    /// The result is clamped to the buffer, because rounding at the far edge of
+    /// a fractionally scaled display can otherwise land one pixel past the end.
     pub fn to_pixel(&self, x: i32, y: i32) -> Option<(u32, u32)> {
         if !self.contains(x, y) {
             return None;
         }
 
-        let px = (f64::from(x - self.logical_x) * self.scale_x()).floor();
-        let py = (f64::from(y - self.logical_y) * self.scale_y()).floor();
+        // Position within the displayed (upright) image, in device pixels.
+        let (dw, dh) = self.displayed_size();
+        let dx = ((f64::from(x - self.logical_x) * self.scale_x())
+            .floor()
+            .max(0.0) as u32)
+            .min(dw.saturating_sub(1));
+        let dy = ((f64::from(y - self.logical_y) * self.scale_y())
+            .floor()
+            .max(0.0) as u32)
+            .min(dh.saturating_sub(1));
 
-        Some((
-            (px.max(0.0) as u32).min(self.pixel_width.saturating_sub(1)),
-            (py.max(0.0) as u32).min(self.pixel_height.saturating_sub(1)),
-        ))
+        Some(self.displayed_to_buffer(dx, dy))
+    }
+
+    /// Undo the output transform: displayed coordinates to raw buffer ones.
+    ///
+    /// The displayed image is `transform(buffer)`, so this applies the inverse.
+    fn displayed_to_buffer(&self, dx: u32, dy: u32) -> (u32, u32) {
+        let bw = self.pixel_width.saturating_sub(1);
+        let bh = self.pixel_height.saturating_sub(1);
+
+        let (bx, by) = match self.transform {
+            Transform::Normal => (dx, dy),
+            // Verified against grim on Hyprland: with wl_output transform 90
+            // the image the user sees is the raw buffer rotated *clockwise*.
+            // The opposite convention is the easy mistake here, and unit tests
+            // cannot catch it because both directions are self-consistent.
+            Transform::Rotate90 => (dy, bh.saturating_sub(dx)),
+            Transform::Rotate180 => (bw.saturating_sub(dx), bh.saturating_sub(dy)),
+            Transform::Rotate270 => (bw.saturating_sub(dy), dx),
+            // Mirroring is rare enough that Pallet handles the horizontal flip
+            // and treats any rotation on top of it as unrotated, rather than
+            // guessing at a combination it cannot test.
+            Transform::Flipped(_) => (bw.saturating_sub(dx), dy),
+        };
+
+        (bx.min(bw), by.min(bh))
     }
 }
 
@@ -178,6 +244,99 @@ mod tests {
             transform: Transform::Normal,
             profile: ColorProfile::Srgb,
         }
+    }
+
+    /// A 1920x1080 panel stood on its side: 1080x1920 logical, but the
+    /// captured buffer is still the raw 1920x1080 framebuffer.
+    fn rotated(id: &str, x: i32, transform: Transform) -> Monitor {
+        Monitor {
+            id: id.into(),
+            name: id.into(),
+            logical_x: x,
+            logical_y: 0,
+            logical_width: 1080,
+            logical_height: 1920,
+            pixel_width: 1920,
+            pixel_height: 1080,
+            transform,
+            profile: ColorProfile::Srgb,
+        }
+    }
+
+    #[test]
+    fn a_rotated_display_still_has_a_scale_of_one() {
+        // The bug this guards: comparing rotated logical geometry against the
+        // unrotated buffer gave 1920/1080 = 1.778 and mapped every pixel wrong.
+        let m = rotated("DP-1", 0, Transform::Rotate90);
+        assert!((m.scale_x() - 1.0).abs() < 1e-9, "got {}", m.scale_x());
+        assert!((m.scale_y() - 1.0).abs() < 1e-9, "got {}", m.scale_y());
+    }
+
+    #[test]
+    fn rotation_is_undone_when_mapping_into_the_buffer() {
+        let m = rotated("DP-1", 0, Transform::Rotate90);
+
+        // Every corner of the upright image must land on a distinct buffer
+        // corner, and all four must be inside the buffer.
+        let corners = [
+            m.to_pixel(0, 0).unwrap(),
+            m.to_pixel(1079, 0).unwrap(),
+            m.to_pixel(0, 1919).unwrap(),
+            m.to_pixel(1079, 1919).unwrap(),
+        ];
+        for (bx, by) in corners {
+            assert!(bx < 1920 && by < 1080, "({bx},{by}) escaped the buffer");
+        }
+        let unique: std::collections::HashSet<_> = corners.iter().collect();
+        assert_eq!(unique.len(), 4, "corners collapsed: {corners:?}");
+
+        // Top-left of the upright image is the bottom-left of the raw buffer:
+        // rotating that buffer clockwise carries it to the top-left.
+        assert_eq!(m.to_pixel(0, 0), Some((0, 1079)));
+    }
+
+    #[test]
+    fn every_rotation_stays_inside_the_buffer() {
+        for transform in [
+            Transform::Normal,
+            Transform::Rotate90,
+            Transform::Rotate180,
+            Transform::Rotate270,
+            Transform::Flipped(0),
+        ] {
+            let m = if transform.swaps_axes() {
+                rotated("DP-1", 0, transform)
+            } else {
+                let mut m = rotated("DP-1", 0, transform);
+                m.logical_width = 1920;
+                m.logical_height = 1080;
+                m
+            };
+
+            for (lx, ly) in [
+                (0, 0),
+                (m.logical_width as i32 - 1, 0),
+                (0, m.logical_height as i32 - 1),
+                (m.logical_width as i32 - 1, m.logical_height as i32 - 1),
+            ] {
+                let (bx, by) = m
+                    .to_pixel(lx, ly)
+                    .unwrap_or_else(|| panic!("{transform:?} rejected ({lx},{ly})"));
+                assert!(
+                    bx < m.pixel_width && by < m.pixel_height,
+                    "{transform:?} mapped ({lx},{ly}) to ({bx},{by}), outside the buffer"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn rotate_180_mirrors_both_axes() {
+        let mut m = rotated("DP-1", 0, Transform::Rotate180);
+        m.logical_width = 1920;
+        m.logical_height = 1080;
+        assert_eq!(m.to_pixel(0, 0), Some((1919, 1079)));
+        assert_eq!(m.to_pixel(1919, 1079), Some((0, 0)));
     }
 
     #[test]

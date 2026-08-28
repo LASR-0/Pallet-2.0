@@ -9,7 +9,13 @@ repository.workspace = true
 description = "GPU loupe overlay renderer."
 
 [dependencies]
+pallet-color.workspace = true
+pallet-capture.workspace = true
 thiserror.workspace = true
+tracing.workspace = true
+wgpu.workspace = true
+bytemuck.workspace = true
+pollster.workspace = true
 
 [lints]
 workspace = true
