@@ -10,6 +10,7 @@ description = "Global hotkey registration with per-platform fallbacks."
 
 [dependencies]
 thiserror.workspace = true
+tracing.workspace = true
 
 [lints]
 workspace = true

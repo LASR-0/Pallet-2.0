@@ -2,4 +2,4 @@
 
 pub mod layer;
 
-pub use layer::run_picker;
+pub use layer::{PickerContext, run_picker_with};

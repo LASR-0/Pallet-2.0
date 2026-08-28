@@ -44,13 +44,17 @@ const LOUPE_RADIUS: f32 = 150.0;
 
 /// One monitor's overlay: a layer surface, its GPU surface, and its pixels.
 struct Overlay {
+    // Declaration order is drop order, and it matters here: the wgpu surface
+    // borrows the wl_surface that the layer surface owns, so it must be
+    // dropped first. The reverse would tear down the Wayland object while
+    // wgpu still held a pointer to it.
+    surface: wgpu::Surface<'static>,
     layer: LayerSurface,
     /// The surface this overlay draws on, for routing input events back to it.
     /// A plain field searched linearly rather than a map key: Wayland proxies
     /// and their ids both have interior mutability, so neither is a sound hash
     /// key, and a desktop has a handful of monitors at most.
     surface_id: ObjectId,
-    surface: wgpu::Surface<'static>,
     screen: Screen,
     /// Index into the capture's frames.
     frame_index: usize,
@@ -82,18 +86,128 @@ struct Picker {
     shift_held: bool,
     exit: bool,
 }
+/// A warm picker: a compositor connection and a live GPU device, kept between
+/// picks.
+///
+/// Building the GPU context costs about 220 ms — measured, and roughly 80% of a
+/// cold pick against 31 ms to capture the screen. Keeping it alive is the
+/// difference between a hotkey that feels instant and one that feels broken,
+/// and is the reason the picker is a resident process at all.
+pub struct PickerContext {
+    connection: Connection,
+    instance: wgpu::Instance,
+    adapter: wgpu::Adapter,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+}
 
-/// Freeze the desktop and let the user pick a colour.
+impl std::fmt::Debug for PickerContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PickerContext").finish_non_exhaustive()
+    }
+}
+
+fn display_handle_of(connection: &Connection) -> Result<RawDisplayHandle> {
+    Ok(RawDisplayHandle::Wayland(WaylandDisplayHandle::new(
+        NonNull::new(
+            connection
+                .backend()
+                .display_ptr()
+                .cast::<std::ffi::c_void>(),
+        )
+        .ok_or_else(|| Error::Compositor("null display pointer".into()))?,
+    )))
+}
+
+fn window_handle_of(surface: &wl_surface::WlSurface) -> Result<RawWindowHandle> {
+    Ok(RawWindowHandle::Wayland(WaylandWindowHandle::new(
+        NonNull::new(surface.id().as_ptr().cast::<std::ffi::c_void>())
+            .ok_or_else(|| Error::Compositor("null surface pointer".into()))?,
+    )))
+}
+
+impl PickerContext {
+    /// Connect to the compositor and build a GPU device. Done once.
+    pub fn new() -> Result<Self> {
+        let connection = Connection::connect_to_env()
+            .map_err(|e| Error::Compositor(format!("could not reach the compositor: {e}")))?;
+        let instance =
+            wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+
+        // The adapter must be able to present to a real Wayland surface, so a
+        // throwaway one is created to choose against. Requesting an adapter
+        // with no surface risks a device that only fails at present time.
+        let (globals, queue) = registry_queue_init::<Picker>(&connection)
+            .map_err(|e| Error::Compositor(format!("registry init failed: {e}")))?;
+        let qh: QueueHandle<Picker> = queue.handle();
+        let compositor = CompositorState::bind(&globals, &qh)
+            .map_err(|_| Error::Unsupported("wl_compositor"))?;
+        // Fail here rather than on the first pick if the compositor cannot do
+        // layer shell at all.
+        LayerShell::bind(&globals, &qh).map_err(|_| Error::Unsupported("zwlr_layer_shell_v1"))?;
+
+        let probe = compositor.create_surface(&qh);
+        let probe_surface = unsafe {
+            instance.create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
+                raw_display_handle: Some(display_handle_of(&connection)?),
+                raw_window_handle: window_handle_of(&probe)?,
+            })
+        }
+        .map_err(|e| Error::Compositor(format!("could not create a probe surface: {e}")))?;
+
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            compatible_surface: Some(&probe_surface),
+            ..Default::default()
+        }))
+        .map_err(|e| Error::NoGpu(e.to_string()))?;
+
+        let (device, gpu_queue) =
+            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+                label: Some("pallet-picker"),
+                required_limits: wgpu::Limits::downlevel_defaults(),
+                ..Default::default()
+            }))
+            .map_err(|e| Error::NoGpu(e.to_string()))?;
+
+        drop(probe_surface);
+        probe.destroy();
+        let _ = queue.flush();
+
+        Ok(Self {
+            connection,
+            instance,
+            adapter,
+            device,
+            queue: gpu_queue,
+        })
+    }
+
+    /// Which GPU the picker is drawing with, for diagnostics.
+    pub fn adapter_info(&self) -> wgpu::AdapterInfo {
+        self.adapter.get_info()
+    }
+}
+
+/// Freeze the desktop and let the user pick a colour on a warm context.
 ///
 /// Blocks until the user commits or cancels.
-pub fn run_picker(capture: Capture, zoom: u32, average_size: u32) -> Result<Outcome> {
+pub fn run_picker_with(
+    context: &PickerContext,
+    capture: Capture,
+    zoom: u32,
+    average_size: u32,
+) -> Result<Outcome> {
     if capture.frames.is_empty() {
         return Err(Error::NoFrame);
     }
+    let opened = std::time::Instant::now();
 
-    let connection = Connection::connect_to_env()
-        .map_err(|e| Error::Compositor(format!("could not reach the compositor: {e}")))?;
-    let (globals, mut queue) = registry_queue_init::<Picker>(&connection)
+    let connection = &context.connection;
+    let instance = &context.instance;
+
+    // A fresh event queue per pick: surfaces are created and torn down each
+    // time, and a queue outliving them would accumulate dead state.
+    let (globals, mut queue) = registry_queue_init::<Picker>(connection)
         .map_err(|e| Error::Compositor(format!("registry init failed: {e}")))?;
     let qh: QueueHandle<Picker> = queue.handle();
 
@@ -103,23 +217,8 @@ pub fn run_picker(capture: Capture, zoom: u32, average_size: u32) -> Result<Outc
         LayerShell::bind(&globals, &qh).map_err(|_| Error::Unsupported("zwlr_layer_shell_v1"))?;
     let output_state = OutputState::new(&globals, &qh);
 
-    let instance =
-        wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+    let display_handle = display_handle_of(connection)?;
 
-    let display_handle = RawDisplayHandle::Wayland(WaylandDisplayHandle::new(
-        NonNull::new(
-            connection
-                .backend()
-                .display_ptr()
-                .cast::<std::ffi::c_void>(),
-        )
-        .ok_or_else(|| Error::Compositor("null display pointer".into()))?,
-    ));
-
-    // Surfaces are built before the GPU device, because the adapter must be one
-    // that can actually present to them. Picking an adapter first risks a
-    // headless or otherwise incompatible device that fails only at present
-    // time, on someone else's machine.
     let mut pending = Vec::with_capacity(capture.frames.len());
     for (index, frame) in capture.frames.iter().enumerate() {
         let surface = compositor.create_surface(&qh);
@@ -142,10 +241,7 @@ pub fn run_picker(capture: Capture, zoom: u32, average_size: u32) -> Result<Outc
         layer.set_exclusive_zone(-1);
         layer.commit();
 
-        let window_handle = RawWindowHandle::Wayland(WaylandWindowHandle::new(
-            NonNull::new(surface.id().as_ptr().cast::<std::ffi::c_void>())
-                .ok_or_else(|| Error::Compositor("null surface pointer".into()))?,
-        ));
+        let window_handle = window_handle_of(&surface)?;
 
         // Safety: the connection and the layer surface both outlive the wgpu
         // surface; all three are owned by `Picker` until the session ends.
@@ -160,20 +256,8 @@ pub fn run_picker(capture: Capture, zoom: u32, average_size: u32) -> Result<Outc
         pending.push((index, surface, layer, gpu_surface));
     }
 
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        compatible_surface: pending.first().map(|(_, _, _, s)| s),
-        ..Default::default()
-    }))
-    .map_err(|e| Error::NoGpu(e.to_string()))?;
-
-    let (device, gpu_queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        label: Some("pallet-picker"),
-        required_limits: wgpu::Limits::downlevel_defaults(),
-        ..Default::default()
-    }))
-    .map_err(|e| Error::NoGpu(e.to_string()))?;
-
-    let renderer = Renderer::from_device(device, gpu_queue);
+    // The expensive part was paid once, when the context was built.
+    let renderer = Renderer::from_device(context.device.clone(), context.queue.clone());
 
     // Start at the centre of the first monitor; the first pointer event
     // corrects this before anything is drawn.
@@ -221,17 +305,48 @@ pub fn run_picker(capture: Capture, zoom: u32, average_size: u32) -> Result<Outc
         exit: false,
     };
 
+    tracing::info!(
+        setup_ms = opened.elapsed().as_millis(),
+        monitors = picker.overlays.len(),
+        "overlay ready"
+    );
+
     while !picker.exit {
         queue
             .blocking_dispatch(&mut picker)
             .map_err(|e| Error::Compositor(e.to_string()))?;
     }
 
-    Ok(picker
+    let outcome = picker
         .session
         .outcome()
         .cloned()
-        .unwrap_or(Outcome::Cancelled))
+        .unwrap_or(Outcome::Cancelled);
+
+    // Take the overlay down explicitly.
+    //
+    // Relying on `Drop` is not enough: the destroy requests it queues are only
+    // buffered, and something has to push them to the compositor. When the
+    // picker was a short-lived process this was invisible, because exiting
+    // closed the connection and the compositor cleaned up. A resident picker
+    // outlives the pick, so without this the frozen screen stays on top of
+    // everything with the keyboard still grabbed.
+    for overlay in picker.overlays.drain(..) {
+        // wgpu first: it borrows the wl_surface underneath.
+        drop(overlay.surface);
+        // Attaching a null buffer unmaps the surface immediately, so the
+        // screen is released before the round trip rather than after it.
+        let wl_surface = overlay.layer.wl_surface().clone();
+        wl_surface.attach(None, 0, 0);
+        wl_surface.commit();
+        drop(overlay.layer);
+    }
+
+    queue
+        .roundtrip(&mut picker)
+        .map_err(|e| Error::Compositor(format!("tearing down the overlay: {e}")))?;
+
+    Ok(outcome)
 }
 
 impl Picker {

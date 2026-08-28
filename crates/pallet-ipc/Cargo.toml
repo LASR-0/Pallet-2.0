@@ -10,6 +10,10 @@ description = "Framed IPC protocol between the Pallet app, picker and CLI."
 
 [dependencies]
 thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+directories.workspace = true
 
 [lints]
 workspace = true

@@ -13,6 +13,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use pallet_color::{Color, Harmony, Space, contrast, naming, ramp};
 use pallet_core::{Paths, logging};
+use pallet_ipc::{Request, Response, read_message, transport, write_message};
 use pallet_store::{Config, Store};
 
 #[derive(Debug, Parser)]
@@ -33,9 +34,25 @@ enum Command {
         /// Magnification, overriding the configured value.
         #[arg(long)]
         zoom: Option<u32>,
-        /// Print only the hex, with no logging noise.
+        /// Print only the hex, with no extra commentary.
         #[arg(long)]
         quiet: bool,
+        /// Do the work in this process rather than asking a running picker.
+        #[arg(long)]
+        no_daemon: bool,
+    },
+    /// Report whether the resident picker is running.
+    Status,
+    /// Show how to bind a global shortcut in this desktop.
+    Hotkey,
+    /// Hold text on the clipboard until something replaces it.
+    ///
+    /// Spawned as a detached child by the copy path; not meant to be run by
+    /// hand. See `copy_to_clipboard`.
+    #[command(hide = true)]
+    ClipboardHold {
+        /// The text to serve.
+        text: String,
     },
     /// Print the colour codes for a value, as the Current screen shows them.
     Convert {
@@ -45,6 +62,9 @@ enum Command {
         /// in perceptually uniform Oklch.
         #[arg(long)]
         hsl: bool,
+        /// Put the hex on the clipboard.
+        #[arg(long)]
+        copy: bool,
     },
     /// Show where Pallet keeps its configuration and library.
     Paths,
@@ -128,7 +148,71 @@ fn main() -> Result<()> {
             }
             println!("library ready at {}", paths.database_file().display());
         }
-        Command::Pick { zoom, quiet } => {
+        Command::ClipboardHold { text } => {
+            // Blocks until another application takes the clipboard, then
+            // exits. This is the whole job of this process.
+            use arboard::SetExtLinux as _;
+            let mut clipboard = arboard::Clipboard::new()?;
+            clipboard.set().wait().text(text)?;
+        }
+        Command::Hotkey => {
+            let paths = Paths::from_env_or_discover()?;
+            let config = Config::load(&paths.config_file()).config;
+            let shortcut = &config.picker.shortcut;
+            let compositor = pallet_hotkey::Compositor::detect();
+
+            let binary = std::env::current_exe()
+                .ok()
+                .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+                .unwrap_or_else(|| "pallet".into());
+            let command = format!("{binary} pick");
+
+            println!("desktop   {compositor:?}");
+            println!("shortcut  {shortcut}");
+            println!();
+
+            match compositor.bind_line(shortcut, &command) {
+                Some(line) => {
+                    if let Some(file) = compositor.config_hint() {
+                        println!("Add this to {file}:");
+                    } else {
+                        println!("Add this to your compositor config:");
+                    }
+                    println!();
+                    println!("    {line}");
+                }
+                None => match compositor.manual_hint() {
+                    Some(hint) => {
+                        println!("{hint}");
+                        println!();
+                        println!("    {command}");
+                    }
+                    None => {
+                        println!("Pallet does not know this desktop's config format.");
+                        println!("Bind a shortcut to this command however your desktop allows:");
+                        println!();
+                        println!("    {command}");
+                    }
+                },
+            }
+
+            println!();
+            println!("Start the resident picker at login so picks are instant:");
+            println!();
+            println!("    {} &", binary.replace("pallet", "pallet-picker"));
+        }
+        Command::Status => {
+            match ping() {
+                Some(version) => println!("picker running (version {version})"),
+                None => println!("picker not running"),
+            }
+            println!("socket  {}", transport::socket_path().display());
+        }
+        Command::Pick {
+            zoom,
+            quiet,
+            no_daemon,
+        } => {
             let paths = Paths::from_env_or_discover()?;
             let loaded = Config::load(&paths.config_file());
             for warning in &loaded.warnings {
@@ -136,30 +220,41 @@ fn main() -> Result<()> {
             }
             let config = loaded.config;
 
-            let mut capture = pallet_capture::open()?;
-            let shot = capture.capture_all()?;
-            if shot.frames.is_empty() {
-                anyhow::bail!("no displays are connected");
-            }
+            let options = pallet_ipc::PickOptions {
+                zoom: zoom.or(Some(u32::from(config.picker.loupe_zoom))),
+                average_size: Some(u32::from(config.picker.average_size)),
+            };
 
-            let outcome = pallet_overlay::run(
-                shot,
-                zoom.unwrap_or(u32::from(config.picker.loupe_zoom)),
-                u32::from(config.picker.average_size),
-            )?;
+            // Prefer the resident picker: it holds a warm GPU context, which is
+            // roughly 220 ms of the ~250 ms a cold pick costs.
+            let response = if no_daemon {
+                None
+            } else {
+                ask_picker(&options)
+            };
+
+            let outcome = match response {
+                Some(r) => r,
+                None => {
+                    if !no_daemon {
+                        tracing::debug!("no picker running; picking in-process");
+                    }
+                    pick_in_process(&options)?
+                }
+            };
 
             match outcome {
-                pallet_overlay::Outcome::Picked {
-                    color,
-                    source_space,
-                    ..
+                Response::Picked {
+                    hex, source_space, ..
                 } => {
-                    println!("{}", color.to_hex());
+                    println!("{hex}");
 
-                    if config.picker.copy_on_pick {
-                        // Clipboard support lands with the resident daemon in
-                        // M5; until then the hex goes to stdout only.
-                        tracing::debug!("copy-on-pick is configured but lands in M5");
+                    let color = pallet_color::Color::parse_hex(&hex)?;
+
+                    if config.picker.copy_on_pick
+                        && let Err(e) = copy_to_clipboard(&hex)
+                    {
+                        eprintln!("warning: could not copy to the clipboard: {e}");
                     }
 
                     paths.ensure_dirs()?;
@@ -173,12 +268,14 @@ fn main() -> Result<()> {
                         eprintln!("  {}", m.named.name);
                     }
                 }
-                pallet_overlay::Outcome::Cancelled => {
+                Response::Cancelled => {
                     if !quiet {
                         eprintln!("cancelled");
                     }
                     std::process::exit(1);
                 }
+                Response::Error { message } => anyhow::bail!(message),
+                Response::Pong { .. } => anyhow::bail!("unexpected reply from the picker"),
             }
         }
         Command::Capture { monitor, out } => {
@@ -266,11 +363,14 @@ fn main() -> Result<()> {
                 grabbed
             );
         }
-        Command::Convert { value, hsl } => {
+        Command::Convert { value, hsl, copy } => {
             let color = Color::parse_hex(&value)
                 .with_context(|| format!("could not read `{value}` as a colour"))?;
             let space = if hsl { Space::Hsl } else { Space::Oklch };
             print_current(color, space);
+            if copy {
+                copy_to_clipboard(&color.to_hex())?;
+            }
         }
     }
 
@@ -328,4 +428,85 @@ fn print_current(color: Color, space: Space) {
         let marker = if swatch.is_base { " ←" } else { "" };
         println!("  {:>3}  {}{marker}", swatch.step, swatch.color.to_hex());
     }
+}
+
+/// Ask the resident picker to run a pick, if one is listening.
+///
+/// Returns `None` when no picker is reachable, so the caller can fall back to
+/// doing the work itself rather than failing.
+fn ask_picker(options: &pallet_ipc::PickOptions) -> Option<Response> {
+    let mut stream = std::os::unix::net::UnixStream::connect(transport::socket_path()).ok()?;
+    write_message(&mut stream, &Request::Pick(options.clone())).ok()?;
+    // No read timeout: a pick lasts exactly as long as the user takes.
+    read_message(&mut stream).ok()
+}
+
+/// Ask the picker for its version, to see whether it is alive.
+fn ping() -> Option<String> {
+    let mut stream = std::os::unix::net::UnixStream::connect(transport::socket_path()).ok()?;
+    write_message(&mut stream, &Request::Ping).ok()?;
+    match read_message(&mut stream).ok()? {
+        Response::Pong { version } => Some(version),
+        _ => None,
+    }
+}
+
+/// Run a pick in this process, paying full start-up cost.
+fn pick_in_process(options: &pallet_ipc::PickOptions) -> Result<Response> {
+    let t = std::time::Instant::now();
+    let mut capture = pallet_capture::open()?;
+    let shot = capture.capture_all()?;
+    let captured = t.elapsed();
+    if shot.frames.is_empty() {
+        anyhow::bail!("no displays are connected");
+    }
+
+    let context = pallet_overlay::context()?;
+    tracing::info!(
+        capture_ms = captured.as_millis(),
+        gpu_ms = (t.elapsed() - captured).as_millis(),
+        "cold start"
+    );
+    let outcome = pallet_overlay::run(
+        &context,
+        shot,
+        options.zoom.unwrap_or(16),
+        options.average_size.unwrap_or(5),
+    )?;
+
+    Ok(match outcome {
+        pallet_overlay::Outcome::Picked {
+            color,
+            at,
+            source_space,
+        } => Response::Picked {
+            hex: color.to_hex(),
+            at,
+            source_space,
+        },
+        pallet_overlay::Outcome::Cancelled => Response::Cancelled,
+    })
+}
+
+/// Put the hex on the clipboard, and keep it there.
+///
+/// A Wayland (or X11) clipboard is not storage: it is a promise served by a
+/// live process, and the selection is dropped the moment that process exits.
+/// Setting it and returning therefore does nothing at all for a command-line
+/// tool, which was the first thing this did and it silently failed.
+///
+/// So the work is handed to a detached copy of this binary that blocks until
+/// something else takes the clipboard, then exits. This is what `wl-copy` does
+/// for the same reason.
+fn copy_to_clipboard(text: &str) -> Result<()> {
+    let exe = std::env::current_exe().context("locating this binary")?;
+    std::process::Command::new(exe)
+        .arg("clipboard-hold")
+        .arg(text)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .context("spawning the clipboard holder")?;
+    Ok(())
 }
