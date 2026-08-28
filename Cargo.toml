@@ -66,6 +66,11 @@ image = { version = "0.25.10", default-features = false, features = ["png"] }
 
 # --- platform: linux ---
 smithay-client-toolkit = "0.21.1"
+wayland-client = "0.31.15"
+wayland-protocols = { version = "0.32.13", features = ["client"] }
+wayland-protocols-wlr = { version = "0.3.12", features = ["client"] }
+memmap2 = "0.9.11"
+rustix = { version = "1.1.4", features = ["shm", "fs", "mm"] }
 ashpd = "0.13.13"
 x11rb = "0.14.0"
 

@@ -7,6 +7,8 @@
 //! bind = CTRL SHIFT, P, exec, pallet pick
 //! ```
 
+use std::path::PathBuf;
+
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use pallet_color::{Color, Harmony, Space, contrast, naming, ramp};
@@ -41,6 +43,28 @@ enum Command {
     Paths,
     /// Create the config file and library, seeding the sample palettes.
     Init,
+    /// Report the capture backend and connected displays.
+    Displays,
+    /// Capture a monitor to a PNG. A diagnostic, not part of normal use:
+    /// Pallet never writes captured frames to disk on its own.
+    Capture {
+        /// Monitor id, e.g. `DP-1`. Defaults to the first connected display.
+        #[arg(long)]
+        monitor: Option<String>,
+        /// Destination PNG.
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Read the colour at a global physical coordinate, without any UI.
+    Probe {
+        /// Global physical x.
+        x: i32,
+        /// Global physical y.
+        y: i32,
+        /// Average a square of this many pixels instead of reading one.
+        #[arg(long, default_value_t = 1)]
+        average: u32,
+    },
 }
 
 fn main() -> Result<()> {
@@ -88,6 +112,68 @@ fn main() -> Result<()> {
             println!("library ready at {}", paths.database_file().display());
         }
         Command::Pick => anyhow::bail!("`pallet pick` lands in M4"),
+        Command::Capture { monitor, out } => {
+            let mut capture = pallet_capture::open()?;
+            let id = match monitor {
+                Some(id) => id,
+                None => capture
+                    .monitors()?
+                    .first()
+                    .map(|m| m.id.clone())
+                    .context("no monitors are connected")?,
+            };
+
+            let frame = capture.capture_monitor(&id)?;
+            let (w, h) = (frame.monitor.width, frame.monitor.height);
+
+            let mut rgb = Vec::with_capacity(w as usize * h as usize * 3);
+            for y in 0..h {
+                for x in 0..w {
+                    let c = frame.pixel(x, y).context("pixel inside frame bounds")?;
+                    rgb.extend_from_slice(&[c.r, c.g, c.b]);
+                }
+            }
+
+            image::RgbImage::from_raw(w, h, rgb)
+                .context("buffer matches the frame dimensions")?
+                .save(&out)?;
+            println!("wrote {} ({w}x{h}) from {id}", out.display());
+        }
+        Command::Displays => {
+            let mut capture = pallet_capture::open()?;
+            println!("backend  {}", capture.backend_name());
+            for m in capture.monitors()? {
+                println!(
+                    "  {:<10} {}x{} at ({},{})  scale {}  {:?}  {:?}",
+                    m.id, m.width, m.height, m.x, m.y, m.scale, m.transform, m.profile
+                );
+            }
+        }
+        Command::Probe { x, y, average } => {
+            let started = std::time::Instant::now();
+            let mut capture = pallet_capture::open()?;
+            let connected = started.elapsed();
+
+            let grab = std::time::Instant::now();
+            let shot = capture.capture_all()?;
+            let grabbed = grab.elapsed();
+
+            let color = if average > 1 {
+                shot.average_at(x, y, average)?
+            } else {
+                shot.pixel_at(x, y)?
+            };
+
+            let bytes: usize = shot.frames.iter().map(|f| f.size_bytes()).sum();
+            println!("{}", color.to_hex());
+            eprintln!(
+                "  {} frames, {:.1} MiB, connect {:?}, grab {:?}",
+                shot.frames.len(),
+                bytes as f64 / (1024.0 * 1024.0),
+                connected,
+                grabbed
+            );
+        }
         Command::Convert { value, hsl } => {
             let color = Color::parse_hex(&value)
                 .with_context(|| format!("could not read `{value}` as a colour"))?;
