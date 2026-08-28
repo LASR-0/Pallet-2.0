@@ -66,16 +66,35 @@ impl Default for LoupeView {
 /// one.
 pub const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
-/// Draws a frozen frame and the loupe over it.
+/// One monitor's frozen pixels, uploaded and ready to draw.
+///
+/// Separate from [`Renderer`] because a desktop has several monitors but only
+/// one GPU context: the device, pipeline and shader are shared, while the
+/// texture and uniforms are per display.
+#[derive(Debug)]
+pub struct Screen {
+    #[expect(dead_code, reason = "kept alive for the bind group's texture view")]
+    texture: wgpu::Texture,
+    uniforms: wgpu::Buffer,
+    bind_group: wgpu::BindGroup,
+    width: u32,
+    height: u32,
+}
+
+impl Screen {
+    /// The frozen frame's size in physical pixels.
+    pub fn size(&self) -> (u32, u32) {
+        (self.width, self.height)
+    }
+}
+
+/// The shared GPU context that draws frozen frames and the loupe.
 #[derive(Debug)]
 pub struct Renderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
     pipeline: wgpu::RenderPipeline,
     layout: wgpu::BindGroupLayout,
-    uniforms: wgpu::Buffer,
-    texture: Option<(wgpu::Texture, u32, u32)>,
-    bind_group: Option<wgpu::BindGroup>,
 }
 
 impl Renderer {
@@ -164,28 +183,11 @@ impl Renderer {
             multiview_mask: None,
         });
 
-        let uniforms = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("loupe-uniforms"),
-            contents: bytemuck::bytes_of(&Uniforms {
-                cursor: [0.0, 0.0],
-                zoom: 16.0,
-                radius: 140.0,
-                sample: 1.0,
-                grid: 1.0,
-                _pad: [0.0, 0.0],
-                picked: [0.0, 0.0, 0.0, 1.0],
-            }),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-
         Self {
             device,
             queue,
             pipeline,
             layout,
-            uniforms,
-            texture: None,
-            bind_group: None,
         }
     }
 
@@ -199,12 +201,12 @@ impl Renderer {
         &self.queue
     }
 
-    /// Upload a captured frame as the frozen backdrop.
+    /// Upload a captured frame as a frozen backdrop for one monitor.
     ///
     /// Converts to RGBA once, on upload, rather than in the shader: the frame
     /// changes only when the picker opens, whereas the shader runs for every
     /// pixel of every redraw.
-    pub fn set_frame(&mut self, frame: &Frame) -> Result<()> {
+    pub fn create_screen(&self, frame: &Frame) -> Result<Screen> {
         let (w, h) = (frame.monitor.pixel_width, frame.monitor.pixel_height);
         if w == 0 || h == 0 {
             return Err(Error::EmptyFrame);
@@ -257,8 +259,24 @@ impl Renderer {
             },
         );
 
+        let uniforms = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("loupe-uniforms"),
+                contents: bytemuck::bytes_of(&Uniforms {
+                    cursor: [0.0, 0.0],
+                    zoom: 16.0,
+                    radius: 0.0,
+                    sample: 1.0,
+                    grid: 1.0,
+                    _pad: [0.0, 0.0],
+                    picked: [0.0, 0.0, 0.0, 1.0],
+                }),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
+
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        self.bind_group = Some(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("loupe-bind"),
             layout: &self.layout,
             entries: &[
@@ -268,17 +286,18 @@ impl Renderer {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: self.uniforms.as_entire_binding(),
+                    resource: uniforms.as_entire_binding(),
                 },
             ],
-        }));
-        self.texture = Some((texture, w, h));
-        Ok(())
-    }
+        });
 
-    /// The size of the currently uploaded frame.
-    pub fn frame_size(&self) -> Option<(u32, u32)> {
-        self.texture.as_ref().map(|(_, w, h)| (*w, *h))
+        Ok(Screen {
+            texture,
+            uniforms,
+            bind_group,
+            width: w,
+            height: h,
+        })
     }
 
     /// Draw into an offscreen texture and read the pixels back.
@@ -286,7 +305,13 @@ impl Renderer {
     /// The loupe's correctness is entirely a property of the shader, so this
     /// makes it testable without a compositor: render, read back, assert on
     /// exact pixels.
-    pub fn render_to_pixels(&self, width: u32, height: u32, view: LoupeView) -> Result<Vec<u8>> {
+    pub fn render_to_pixels(
+        &self,
+        screen: &Screen,
+        width: u32,
+        height: u32,
+        view: LoupeView,
+    ) -> Result<Vec<u8>> {
         let target = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("offscreen"),
             size: wgpu::Extent3d {
@@ -302,7 +327,7 @@ impl Renderer {
             view_formats: &[],
         });
         let target_view = target.create_view(&wgpu::TextureViewDescriptor::default());
-        self.draw(&target_view, view)?;
+        self.draw(screen, &target_view, view);
 
         // Readback rows must be aligned, so the buffer is usually wider than
         // the image and is trimmed after mapping.
@@ -367,12 +392,10 @@ impl Renderer {
         Ok(out)
     }
 
-    /// Record a draw of the frozen frame and loupe into `target`.
-    pub fn draw(&self, target: &wgpu::TextureView, view: LoupeView) -> Result<()> {
-        let bind_group = self.bind_group.as_ref().ok_or(Error::NoFrame)?;
-
+    /// Draw one screen's frozen frame, and the loupe if it is on this screen.
+    pub fn draw(&self, screen: &Screen, target: &wgpu::TextureView, view: LoupeView) {
         self.queue.write_buffer(
-            &self.uniforms,
+            &screen.uniforms,
             0,
             bytemuck::bytes_of(&Uniforms {
                 // Aim at the centre of the pixel, so the magnified texel under
@@ -415,10 +438,9 @@ impl Renderer {
                 multiview_mask: None,
             });
             pass.set_pipeline(&self.pipeline);
-            pass.set_bind_group(0, bind_group, &[]);
+            pass.set_bind_group(0, &screen.bind_group, &[]);
             pass.draw(0..3, 0..1);
         }
         self.queue.submit(Some(encoder.finish()));
-        Ok(())
     }
 }

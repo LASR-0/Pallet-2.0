@@ -17,6 +17,7 @@ pallet-core.workspace = true
 pallet-color.workspace = true
 pallet-store.workspace = true
 pallet-capture.workspace = true
+pallet-overlay.workspace = true
 image.workspace = true
 anyhow.workspace = true
 clap.workspace = true

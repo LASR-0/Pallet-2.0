@@ -66,7 +66,11 @@ image = { version = "0.25.10", default-features = false, features = ["png"] }
 
 # --- platform: linux ---
 smithay-client-toolkit = "0.21.1"
-wayland-client = "0.31.15"
+# `system` routes through libwayland rather than the pure-Rust backend, which
+# is required to hand raw wl_display/wl_surface pointers to wgpu. `dlopen`
+# loads it at runtime instead of linking it, so the binary still starts on a
+# machine with no libwayland (an X11-only session, for instance).
+wayland-client = { version = "0.31.15", features = ["system", "dlopen"] }
 wayland-protocols = { version = "0.32.13", features = ["client", "unstable"] }
 wayland-protocols-wlr = { version = "0.3.12", features = ["client"] }
 memmap2 = "0.9.11"

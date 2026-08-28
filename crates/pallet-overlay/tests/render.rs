@@ -61,12 +61,13 @@ fn px(buf: &[u8], w: u32, x: u32, y: u32) -> Color {
 fn outside_the_loupe_the_screen_is_reproduced_exactly() {
     // The whole promise of a frozen screen: untouched pixels. Any colour
     // management in the pipeline would break this.
-    let Some(mut r) = renderer() else { return };
+    let Some(r) = renderer() else { return };
     let frame = coded_frame(64, 64);
-    r.set_frame(&frame).expect("upload");
+    let screen = r.create_screen(&frame).expect("upload");
 
     let out = r
         .render_to_pixels(
+            &screen,
             64,
             64,
             LoupeView {
@@ -88,11 +89,12 @@ fn outside_the_loupe_the_screen_is_reproduced_exactly() {
 
 #[test]
 fn the_loupe_magnifies_by_the_requested_factor() {
-    let Some(mut r) = renderer() else { return };
-    r.set_frame(&coded_frame(64, 64)).expect("upload");
+    let Some(r) = renderer() else { return };
+    let screen = r.create_screen(&coded_frame(64, 64)).expect("upload");
 
     let out = r
         .render_to_pixels(
+            &screen,
             64,
             64,
             LoupeView {
@@ -124,11 +126,12 @@ fn the_loupe_magnifies_by_the_requested_factor() {
 fn magnification_is_nearest_neighbour_never_interpolated() {
     // Interpolation would invent colours that are not on screen, so the loupe
     // could show a colour the user cannot actually pick.
-    let Some(mut r) = renderer() else { return };
-    r.set_frame(&coded_frame(64, 64)).expect("upload");
+    let Some(r) = renderer() else { return };
+    let screen = r.create_screen(&coded_frame(64, 64)).expect("upload");
 
     let out = r
         .render_to_pixels(
+            &screen,
             64,
             64,
             LoupeView {
@@ -166,13 +169,14 @@ fn magnification_is_nearest_neighbour_never_interpolated() {
 #[test]
 fn the_centre_of_the_loupe_shows_the_pixel_that_will_be_picked() {
     // If this drifts, users pick a different colour from the one they aimed at.
-    let Some(mut r) = renderer() else { return };
+    let Some(r) = renderer() else { return };
     let frame = coded_frame(64, 64);
-    r.set_frame(&frame).expect("upload");
+    let screen = r.create_screen(&frame).expect("upload");
 
     for cursor in [(10u32, 10u32), (32, 32), (50, 20), (63, 63), (0, 0)] {
         let out = r
             .render_to_pixels(
+                &screen,
                 64,
                 64,
                 LoupeView {
@@ -197,8 +201,8 @@ fn the_centre_of_the_loupe_shows_the_pixel_that_will_be_picked() {
 
 #[test]
 fn the_grid_only_appears_when_asked_for() {
-    let Some(mut r) = renderer() else { return };
-    r.set_frame(&coded_frame(64, 64)).expect("upload");
+    let Some(r) = renderer() else { return };
+    let screen = r.create_screen(&coded_frame(64, 64)).expect("upload");
 
     // A radius wide enough to contain several grid lines. At radius 20 with
     // 16x zoom the only lines fall at exactly +/-8px, which is where the
@@ -211,21 +215,42 @@ fn the_grid_only_appears_when_asked_for() {
         ..Default::default()
     };
 
-    let with = r.render_to_pixels(64, 64, view(true)).expect("render");
-    let without = r.render_to_pixels(64, 64, view(false)).expect("render");
+    let with = r
+        .render_to_pixels(&screen, 64, 64, view(true))
+        .expect("render");
+    let without = r
+        .render_to_pixels(&screen, 64, 64, view(false))
+        .expect("render");
     assert_ne!(with, without, "the grid flag changed nothing");
 }
 
 #[test]
-fn a_draw_before_any_frame_is_an_error_not_a_panic() {
+fn an_empty_frame_is_rejected() {
     let Some(r) = renderer() else { return };
-    assert!(r.render_to_pixels(32, 32, LoupeView::default()).is_err());
+    let mut frame = coded_frame(4, 4);
+    frame.monitor.pixel_width = 0;
+    assert!(r.create_screen(&frame).is_err());
 }
 
 #[test]
-fn an_empty_frame_is_rejected() {
-    let Some(mut r) = renderer() else { return };
-    let mut frame = coded_frame(4, 4);
-    frame.monitor.pixel_width = 0;
-    assert!(r.set_frame(&frame).is_err());
+fn each_monitor_gets_its_own_frozen_pixels() {
+    // A desktop is several screens sharing one GPU context; one screen's
+    // upload must not overwrite another's.
+    let Some(r) = renderer() else { return };
+    let a = r.create_screen(&coded_frame(32, 32)).expect("upload a");
+    let b = r.create_screen(&coded_frame(64, 64)).expect("upload b");
+
+    assert_eq!(a.size(), (32, 32));
+    assert_eq!(b.size(), (64, 64));
+
+    let view = LoupeView {
+        cursor: (4, 4),
+        radius: 0.0,
+        ..Default::default()
+    };
+    let out_a = r.render_to_pixels(&a, 32, 32, view).expect("render a");
+    let out_b = r.render_to_pixels(&b, 32, 32, view).expect("render b");
+    // Same coordinates, same coded content, so these must agree - proving the
+    // second upload did not clobber the first.
+    assert_eq!(px(&out_a, 32, 10, 10), px(&out_b, 32, 10, 10));
 }

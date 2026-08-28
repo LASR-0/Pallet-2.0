@@ -29,7 +29,14 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     /// Freeze the screen and pick a colour.
-    Pick,
+    Pick {
+        /// Magnification, overriding the configured value.
+        #[arg(long)]
+        zoom: Option<u32>,
+        /// Print only the hex, with no logging noise.
+        #[arg(long)]
+        quiet: bool,
+    },
     /// Print the colour codes for a value, as the Current screen shows them.
     Convert {
         /// A colour in any supported notation, e.g. `#A5236E`.
@@ -121,7 +128,59 @@ fn main() -> Result<()> {
             }
             println!("library ready at {}", paths.database_file().display());
         }
-        Command::Pick => anyhow::bail!("`pallet pick` lands in M4"),
+        Command::Pick { zoom, quiet } => {
+            let paths = Paths::from_env_or_discover()?;
+            let loaded = Config::load(&paths.config_file());
+            for warning in &loaded.warnings {
+                eprintln!("warning: {warning}");
+            }
+            let config = loaded.config;
+
+            let mut capture = pallet_capture::open()?;
+            let shot = capture.capture_all()?;
+            if shot.frames.is_empty() {
+                anyhow::bail!("no displays are connected");
+            }
+
+            let outcome = pallet_overlay::run(
+                shot,
+                zoom.unwrap_or(u32::from(config.picker.loupe_zoom)),
+                u32::from(config.picker.average_size),
+            )?;
+
+            match outcome {
+                pallet_overlay::Outcome::Picked {
+                    color,
+                    source_space,
+                    ..
+                } => {
+                    println!("{}", color.to_hex());
+
+                    if config.picker.copy_on_pick {
+                        // Clipboard support lands with the resident daemon in
+                        // M5; until then the hex goes to stdout only.
+                        tracing::debug!("copy-on-pick is configured but lands in M5");
+                    }
+
+                    paths.ensure_dirs()?;
+                    let store = Store::open(&paths.database_file())?;
+                    store.record_pick(color, source_space.as_deref(), None)?;
+
+                    if !quiet
+                        && config.color.name_new_colors
+                        && let Some(m) = pallet_color::naming::nearest(color)
+                    {
+                        eprintln!("  {}", m.named.name);
+                    }
+                }
+                pallet_overlay::Outcome::Cancelled => {
+                    if !quiet {
+                        eprintln!("cancelled");
+                    }
+                    std::process::exit(1);
+                }
+            }
+        }
         Command::Capture { monitor, out } => {
             let mut capture = pallet_capture::open()?;
             let id = match monitor {
