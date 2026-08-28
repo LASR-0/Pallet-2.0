@@ -57,7 +57,14 @@ impl std::fmt::Debug for Frame {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Frame")
             .field("monitor", &self.monitor.id)
-            .field("size", &(self.monitor.width, self.monitor.height))
+            .field(
+                "pixels",
+                &(self.monitor.pixel_width, self.monitor.pixel_height),
+            )
+            .field(
+                "logical",
+                &(self.monitor.logical_width, self.monitor.logical_height),
+            )
             .field("stride", &self.stride)
             .field("format", &self.format)
             .field("bytes", &self.data.len())
@@ -71,7 +78,7 @@ impl Frame {
     /// Returns `None` outside the frame rather than panicking, because the
     /// loupe routinely asks about pixels near an edge.
     pub fn pixel(&self, x: u32, y: u32) -> Option<Color> {
-        if x >= self.monitor.width || y >= self.monitor.height {
+        if x >= self.monitor.pixel_width || y >= self.monitor.pixel_height {
             return None;
         }
 
@@ -143,58 +150,60 @@ pub struct Capture {
 }
 
 impl Capture {
-    /// Read the pixel at a **global physical** coordinate.
+    /// Read the pixel at a **logical** desktop coordinate.
+    ///
+    /// Logical is the right unit for the public API because that is what the
+    /// pointer reports. The conversion to a physical pixel happens per monitor,
+    /// so a mixed-scale desktop resolves correctly.
     pub fn pixel_at(&self, x: i32, y: i32) -> Result<Color> {
-        let frame = self
-            .frames
-            .iter()
-            .find(|f| f.monitor.contains(x, y))
-            .ok_or(Error::OutOfBounds { x, y })?;
-
-        let (lx, ly) = frame
-            .monitor
-            .to_local(x, y)
-            .ok_or(Error::OutOfBounds { x, y })?;
-
-        frame.pixel(lx, ly).ok_or(Error::OutOfBounds { x, y })
+        let (frame, px, py) = self.locate(x, y)?;
+        frame.pixel(px, py).ok_or(Error::OutOfBounds { x, y })
     }
 
-    /// Average a square at a **global physical** coordinate.
+    /// Average a square of physical pixels around a **logical** coordinate.
     pub fn average_at(&self, x: i32, y: i32, size: u32) -> Result<Color> {
-        let frame = self
-            .frames
-            .iter()
-            .find(|f| f.monitor.contains(x, y))
-            .ok_or(Error::OutOfBounds { x, y })?;
-
-        let (lx, ly) = frame
-            .monitor
-            .to_local(x, y)
-            .ok_or(Error::OutOfBounds { x, y })?;
-
+        let (frame, px, py) = self.locate(x, y)?;
         frame
-            .average(lx, ly, size)
+            .average(px, py, size)
             .ok_or(Error::OutOfBounds { x, y })
     }
 
-    /// The frame covering a global point, if any.
+    /// Resolve a logical point to a frame and a physical pixel within it.
+    fn locate(&self, x: i32, y: i32) -> Result<(&Frame, u32, u32)> {
+        let frame = self
+            .frames
+            .iter()
+            .find(|f| f.monitor.contains(x, y))
+            .ok_or(Error::OutOfBounds { x, y })?;
+
+        let (px, py) = frame
+            .monitor
+            .to_pixel(x, y)
+            .ok_or(Error::OutOfBounds { x, y })?;
+
+        Ok((frame, px, py))
+    }
+
+    /// The frame covering a **logical** point, if any.
     pub fn frame_at(&self, x: i32, y: i32) -> Option<&Frame> {
         self.frames.iter().find(|f| f.monitor.contains(x, y))
     }
 
-    /// The bounding box of every captured monitor, in physical pixels.
+    /// The bounding box of the desktop, in **logical** units.
     pub fn bounds(&self) -> Option<(i32, i32, i32, i32)> {
         let first = self.frames.first()?;
-        let mut min_x = first.monitor.x;
-        let mut min_y = first.monitor.y;
-        let mut max_x = first.monitor.x + first.monitor.width as i32;
-        let mut max_y = first.monitor.y + first.monitor.height as i32;
+        let m = &first.monitor;
+        let mut min_x = m.logical_x;
+        let mut min_y = m.logical_y;
+        let mut max_x = m.logical_x + m.logical_width as i32;
+        let mut max_y = m.logical_y + m.logical_height as i32;
 
         for f in &self.frames[1..] {
-            min_x = min_x.min(f.monitor.x);
-            min_y = min_y.min(f.monitor.y);
-            max_x = max_x.max(f.monitor.x + f.monitor.width as i32);
-            max_y = max_y.max(f.monitor.y + f.monitor.height as i32);
+            let m = &f.monitor;
+            min_x = min_x.min(m.logical_x);
+            min_y = min_y.min(m.logical_y);
+            max_x = max_x.max(m.logical_x + m.logical_width as i32);
+            max_y = max_y.max(m.logical_y + m.logical_height as i32);
         }
         Some((min_x, min_y, max_x, max_y))
     }
@@ -239,11 +248,12 @@ mod tests {
             monitor: Monitor {
                 id: "TEST".into(),
                 name: "TEST".into(),
-                x: 0,
-                y: 0,
-                width,
-                height,
-                scale: 1.0,
+                logical_x: 0,
+                logical_y: 0,
+                logical_width: width,
+                logical_height: height,
+                pixel_width: width,
+                pixel_height: height,
                 transform: Transform::Normal,
                 profile: ColorProfile::Srgb,
             },
@@ -321,7 +331,7 @@ mod tests {
         left.monitor.id = "DP-2".into();
         let mut right = frame_of(1920, 4, 0, &[0x99, 0x99, 0x99, 0xFF]);
         right.monitor.id = "DP-1".into();
-        right.monitor.x = 1920;
+        right.monitor.logical_x = 1920;
 
         let capture = Capture {
             frames: vec![left, right],

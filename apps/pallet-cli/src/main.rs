@@ -45,6 +45,16 @@ enum Command {
     Init,
     /// Report the capture backend and connected displays.
     Displays,
+    /// Hold one backend open and re-enumerate on a timer. Used to verify that
+    /// a long-lived picker survives monitors coming and going.
+    Watch {
+        /// How many times to poll.
+        #[arg(long, default_value_t = 10)]
+        ticks: u32,
+        /// Milliseconds between polls.
+        #[arg(long, default_value_t = 1000)]
+        every: u64,
+    },
     /// Capture a monitor to a PNG. A diagnostic, not part of normal use:
     /// Pallet never writes captured frames to disk on its own.
     Capture {
@@ -124,7 +134,7 @@ fn main() -> Result<()> {
             };
 
             let frame = capture.capture_monitor(&id)?;
-            let (w, h) = (frame.monitor.width, frame.monitor.height);
+            let (w, h) = (frame.monitor.pixel_width, frame.monitor.pixel_height);
 
             let mut rgb = Vec::with_capacity(w as usize * h as usize * 3);
             for y in 0..h {
@@ -139,13 +149,36 @@ fn main() -> Result<()> {
                 .save(&out)?;
             println!("wrote {} ({w}x{h}) from {id}", out.display());
         }
+        Command::Watch { ticks, every } => {
+            let mut capture = pallet_capture::open()?;
+            for tick in 1..=ticks {
+                match capture.capture_all() {
+                    Ok(shot) => {
+                        let ids: Vec<_> =
+                            shot.frames.iter().map(|f| f.monitor.id.clone()).collect();
+                        println!("tick {tick:>2}: {} frames {:?}", shot.frames.len(), ids);
+                    }
+                    Err(e) => println!("tick {tick:>2}: ERROR {e}"),
+                }
+                std::thread::sleep(std::time::Duration::from_millis(every));
+            }
+        }
         Command::Displays => {
             let mut capture = pallet_capture::open()?;
             println!("backend  {}", capture.backend_name());
             for m in capture.monitors()? {
                 println!(
-                    "  {:<10} {}x{} at ({},{})  scale {}  {:?}  {:?}",
-                    m.id, m.width, m.height, m.x, m.y, m.scale, m.transform, m.profile
+                    "  {:<10} {}x{}px  logical {}x{} at ({},{})  scale {:.3}  {:?}  {:?}",
+                    m.id,
+                    m.pixel_width,
+                    m.pixel_height,
+                    m.logical_width,
+                    m.logical_height,
+                    m.logical_x,
+                    m.logical_y,
+                    m.scale_x(),
+                    m.transform,
+                    m.profile
                 );
             }
         }

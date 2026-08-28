@@ -55,11 +55,14 @@ impl X11Capture {
         Ok(Monitor {
             id: "X11".into(),
             name: "X11 root window".into(),
-            x: 0,
-            y: 0,
-            width,
-            height,
-            scale: 1.0,
+            // X11 has no compositor-side scaling, so logical and physical
+            // coordinates are the same thing here.
+            logical_x: 0,
+            logical_y: 0,
+            logical_width: width,
+            logical_height: height,
+            pixel_width: width,
+            pixel_height: height,
             transform: Transform::Normal,
             profile: ColorProfile::Unknown,
         })
@@ -88,8 +91,8 @@ impl ScreenCapture for X11Capture {
                 root,
                 0,
                 0,
-                monitor.width as u16,
-                monitor.height as u16,
+                monitor.pixel_width as u16,
+                monitor.pixel_height as u16,
                 !0,
             )
             .map_err(|e| Error::Refused(e.to_string()))?
@@ -97,7 +100,7 @@ impl ScreenCapture for X11Capture {
             .map_err(|e| Error::Refused(e.to_string()))?;
 
         Ok(Frame {
-            stride: monitor.width as usize * 4,
+            stride: monitor.pixel_width as usize * 4,
             monitor,
             data: image.data,
             // X11 truecolour visuals are little-endian BGRX in memory.

@@ -30,7 +30,13 @@ pub use monitor::{ColorProfile, Monitor, Transform};
 /// build one once at start-up and keep it warm rather than paying connection
 /// cost on every pick.
 pub trait ScreenCapture: std::fmt::Debug + Send {
-    /// The displays currently connected, in physical pixels.
+    /// The displays currently connected.
+    ///
+    /// Re-enumerated on each call, because a resident picker outlives any
+    /// particular monitor arrangement. **Order carries no meaning** and can
+    /// change when a display is unplugged and reconnected; identify a monitor
+    /// by [`Monitor::id`], or find one geometrically with
+    /// [`Monitor::contains`].
     fn monitors(&mut self) -> Result<Vec<Monitor>>;
 
     /// Freeze every monitor.
@@ -38,6 +44,9 @@ pub trait ScreenCapture: std::fmt::Debug + Send {
     /// All frames should come from as close to the same instant as the
     /// platform allows: the loupe presents them as one frozen desktop, and
     /// visible tearing between monitors would give that away.
+    ///
+    /// Frame order is unspecified, for the same reason as [`Self::monitors`].
+    /// An empty [`Capture`] is valid and means every display was disconnected.
     fn capture_all(&mut self) -> Result<Capture>;
 
     /// Freeze a single monitor by id.

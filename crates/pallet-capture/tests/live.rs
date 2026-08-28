@@ -32,8 +32,17 @@ fn monitors_are_reported_in_physical_pixels() {
         "a session must have at least one output"
     );
     for m in &monitors {
-        assert!(m.width > 0 && m.height > 0, "{} had no size", m.id);
-        assert!(m.scale > 0.0, "{} had a non-positive scale", m.id);
+        assert!(
+            m.pixel_width > 0 && m.pixel_height > 0,
+            "{} had no framebuffer size",
+            m.id
+        );
+        assert!(
+            m.logical_width > 0 && m.logical_height > 0,
+            "{} had no logical size",
+            m.id
+        );
+        assert!(m.scale_x() > 0.0, "{} had a non-positive scale", m.id);
         assert!(!m.id.is_empty(), "every monitor needs an id");
     }
 }
@@ -46,10 +55,10 @@ fn monitors_do_not_overlap() {
 
     for (i, a) in monitors.iter().enumerate() {
         for b in &monitors[i + 1..] {
-            let disjoint = a.x + (a.width as i32) <= b.x
-                || b.x + (b.width as i32) <= a.x
-                || a.y + (a.height as i32) <= b.y
-                || b.y + (b.height as i32) <= a.y;
+            let disjoint = a.logical_x + (a.logical_width as i32) <= b.logical_x
+                || b.logical_x + (b.logical_width as i32) <= a.logical_x
+                || a.logical_y + (a.logical_height as i32) <= b.logical_y
+                || b.logical_y + (b.logical_height as i32) <= a.logical_y;
             assert!(disjoint, "{} and {} overlap", a.id, b.id);
         }
     }
@@ -69,21 +78,24 @@ fn a_capture_covers_every_monitor_with_a_correctly_sized_buffer() {
     for frame in &shot.frames {
         let m = &frame.monitor;
         assert!(
-            frame.stride >= m.width as usize * 4,
+            frame.stride >= m.pixel_width as usize * 4,
             "{} stride {} is narrower than its width",
             m.id,
             frame.stride
         );
         assert!(
-            frame.data.len() >= frame.stride * m.height as usize,
+            frame.data.len() >= frame.stride * m.pixel_height as usize,
             "{} buffer is short of its declared geometry",
             m.id
         );
         // Corners must be readable; these are the indices most likely to be
         // wrong if stride handling is broken.
         assert!(frame.pixel(0, 0).is_some());
-        assert!(frame.pixel(m.width - 1, m.height - 1).is_some());
-        assert!(frame.pixel(m.width, 0).is_none(), "width is exclusive");
+        assert!(frame.pixel(m.pixel_width - 1, m.pixel_height - 1).is_some());
+        assert!(
+            frame.pixel(m.pixel_width, 0).is_none(),
+            "width is exclusive"
+        );
     }
 }
 
@@ -99,10 +111,13 @@ fn every_pixel_of_the_desktop_is_addressable_and_beyond_it_is_not() {
     for frame in &shot.frames {
         let m = &frame.monitor;
         for (x, y) in [
-            (m.x, m.y),
-            (m.x + m.width as i32 - 1, m.y),
-            (m.x, m.y + m.height as i32 - 1),
-            (m.x + m.width as i32 - 1, m.y + m.height as i32 - 1),
+            (m.logical_x, m.logical_y),
+            (m.logical_x + m.logical_width as i32 - 1, m.logical_y),
+            (m.logical_x, m.logical_y + m.logical_height as i32 - 1),
+            (
+                m.logical_x + m.logical_width as i32 - 1,
+                m.logical_y + m.logical_height as i32 - 1,
+            ),
         ] {
             assert!(shot.pixel_at(x, y).is_ok(), "{} corner ({x},{y})", m.id);
         }
@@ -140,8 +155,8 @@ fn a_single_monitor_capture_matches_that_monitor_in_the_full_capture() {
 
     let frame = capture.capture_monitor(&first.id).expect("single capture");
     assert_eq!(frame.monitor.id, first.id);
-    assert_eq!(frame.monitor.width, first.width);
-    assert_eq!(frame.monitor.height, first.height);
+    assert_eq!(frame.monitor.pixel_width, first.pixel_width);
+    assert_eq!(frame.monitor.pixel_height, first.pixel_height);
 }
 
 #[test]
