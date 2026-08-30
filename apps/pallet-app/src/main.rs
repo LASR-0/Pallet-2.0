@@ -116,6 +116,81 @@ fn color_detail(
     })
 }
 
+/// A palette as the Palettes screen shows it.
+#[derive(Debug, Serialize)]
+struct PaletteCard {
+    id: String,
+    /// Two-digit index, as the prototype numbers its cards.
+    num: String,
+    name: String,
+    /// "5 · 2019" — swatch count and the year it was created.
+    meta: String,
+    colors: Vec<String>,
+}
+
+/// A colour as the Colours screen shows it.
+#[derive(Debug, Serialize)]
+struct ColourChip {
+    id: String,
+    name: String,
+    hex: String,
+}
+
+/// Every palette, newest first.
+#[tauri::command]
+fn palettes(state: tauri::State<'_, AppState>) -> Result<Vec<PaletteCard>, String> {
+    let store = state
+        .store
+        .lock()
+        .map_err(|_| "the colour library is unavailable".to_string())?;
+
+    let mut palettes = store.palettes().map_err(|e| e.to_string())?;
+    // The library returns newest first, which suits a recents list. A swatch
+    // book reads the other way, and it is the order the prototype numbers its
+    // cards in: Winter Sunset is 01.
+    palettes.reverse();
+
+    Ok(palettes
+        .into_iter()
+        .enumerate()
+        .map(|(i, p)| PaletteCard {
+            num: format!("{:02}", i + 1),
+            meta: format!("{} · {}", p.colours.len(), p.created_at.year()),
+            colors: p.colours.iter().map(|c| c.color.to_hex()).collect(),
+            id: p.id,
+            name: p.name,
+        })
+        .collect())
+}
+
+/// Every named colour in the library, newest first.
+///
+/// Unnamed colours are left out: the Colours screen is a grid of *named*
+/// swatches, and a palette's members are shown on its own card rather than
+/// duplicated here.
+#[tauri::command]
+fn colours(state: tauri::State<'_, AppState>) -> Result<Vec<ColourChip>, String> {
+    let store = state
+        .store
+        .lock()
+        .map_err(|_| "the colour library is unavailable".to_string())?;
+
+    let mut colours = store.colours().map_err(|e| e.to_string())?;
+    // Insertion order, as above.
+    colours.reverse();
+
+    Ok(colours
+        .into_iter()
+        .filter_map(|c| {
+            c.name.map(|name| ColourChip {
+                id: c.id,
+                name,
+                hex: c.color.to_hex(),
+            })
+        })
+        .collect())
+}
+
 /// The most recent pick, so the window opens showing something real.
 #[tauri::command]
 fn latest_pick(state: tauri::State<'_, AppState>) -> Result<Option<String>, String> {
@@ -204,7 +279,9 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             color_detail,
             latest_pick,
-            contrast_report
+            contrast_report,
+            palettes,
+            colours
         ])
         .run(tauri::generate_context!())
         .expect("the Pallet window failed to start");
