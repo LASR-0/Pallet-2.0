@@ -27,3 +27,23 @@ export async function palettes(): Promise<PaletteCard[]> {
 export async function colours(): Promise<ColourChip[]> {
   return invoke<ColourChip[]>("colours");
 }
+
+/** Blocks until the user commits or abandons the pick. */
+export async function pickColour(): Promise<string | null> {
+  return invoke<string | null>("pick_colour");
+}
+
+export async function paletteLimits(): Promise<[number, number]> {
+  return invoke<[number, number]>("palette_limits");
+}
+
+export async function nextPaletteName(): Promise<string> {
+  return invoke<string>("next_palette_name");
+}
+
+export async function savePalette(
+  name: string,
+  hexes: string[],
+): Promise<string> {
+  return invoke<string>("save_palette", { name, hexes });
+}

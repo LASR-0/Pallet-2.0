@@ -6,6 +6,7 @@
  */
 
 import { el, spacer } from "../dom";
+import { completionFor, filterByQuery, renderSearchBar } from "./search";
 import type { ColourChip, PaletteCard } from "../state";
 
 const MONO = "var(--mono),monospace";
@@ -44,11 +45,27 @@ function empty(message: string): HTMLElement {
 
 export function renderPalettes(
   palettes: PaletteCard[] | null,
+  query: string,
   onPickHex: (hex: string) => void,
+  search: { onQuery: (value: string) => void },
 ): HTMLElement {
   if (palettes === null) return empty("Loading…");
 
-  const cards = palettes.map((p) =>
+  const names = palettes.map((p) => p.name);
+  const results = el("div", {
+    style: "display:flex;flex-direction:column;gap:12px",
+  });
+
+  const paint = (q: string) => {
+    const shown = filterByQuery(palettes, q, ["name"]);
+    results.replaceChildren(
+      ...(shown.length
+        ? shown.map(card)
+        : [empty(q ? `Nothing matches "${q}".` : "No palettes yet.")]),
+    );
+  };
+
+  const card = (p: PaletteCard) =>
     el(
       "div",
       {
@@ -86,62 +103,90 @@ export function renderPalettes(
           }),
         ]),
       ],
-    ),
-  );
+    );
 
-  return el(
-    "div",
-    { style: "display:flex;flex-direction:column;gap:12px" },
-    [
-      libraryBar("LIBRARY : PALETTES", palettes.length),
-      ...(palettes.length ? cards : [empty("No palettes yet.")]),
-    ],
-  );
+  paint(query);
+
+  return el("div", { style: "display:flex;flex-direction:column;gap:12px" }, [
+    libraryBar("LIBRARY : PALETTES", palettes.length),
+    renderSearchBar(query, "Search palettes", {
+      complete: (q) => completionFor(q, names),
+      onQuery: (q) => {
+        paint(q);
+        search.onQuery(q);
+      },
+    }),
+    results,
+  ]);
 }
 
 export function renderColours(
   colours: ColourChip[] | null,
+  query: string,
   onPickHex: (hex: string) => void,
+  search: { onQuery: (value: string) => void },
 ): HTMLElement {
   if (colours === null) return empty("Loading…");
 
-  const grid = el(
-    "div",
-    { style: "display:grid;grid-template-columns:repeat(3,1fr);gap:10px" },
-    colours.map((c) =>
-      el(
-        "div",
-        {
-          class: "hv-card",
+  const names = colours.map((c) => c.name);
+  const results = el("div", {});
+
+  const chip = (c: ColourChip) =>
+    el(
+      "div",
+      {
+        class: "hv-card",
+        style:
+          "display:flex;flex-direction:column;align-items:center;gap:6px;" +
+          "padding:12px 6px 10px;border-radius:var(--rad2);background:var(--panel);" +
+          "border:1px solid var(--line);cursor:pointer",
+        onClick: () => onPickHex(c.hex),
+      },
+      [
+        el("div", {
           style:
-            "display:flex;flex-direction:column;align-items:center;gap:6px;" +
-            "padding:12px 6px 10px;border-radius:var(--rad2);background:var(--panel);" +
-            "border:1px solid var(--line);cursor:pointer",
-          onClick: () => onPickHex(c.hex),
-        },
-        [
-          el("div", {
-            style:
-              `width:46px;height:46px;border-radius:50%;background:${c.hex};` +
-              "box-shadow:inset 0 0 0 1px rgba(0,0,0,.08)",
-          }),
-          el("span", {
-            style:
-              `font:500 10.5px/1.2 ${SANS};text-align:center;max-width:100%;` +
-              "overflow:hidden;text-overflow:ellipsis;white-space:nowrap",
-            text: c.name,
-          }),
-          el("span", {
-            style: `font:400 9px/1 ${MONO};color:var(--mute)`,
-            text: c.hex,
-          }),
-        ],
-      ),
-    ),
-  );
+            `width:46px;height:46px;border-radius:50%;background:${c.hex};` +
+            "box-shadow:inset 0 0 0 1px rgba(0,0,0,.08)",
+        }),
+        el("span", {
+          style:
+            `font:500 10.5px/1.2 ${SANS};text-align:center;max-width:100%;` +
+            "overflow:hidden;text-overflow:ellipsis;white-space:nowrap",
+          text: c.name,
+        }),
+        el("span", {
+          style: `font:400 9px/1 ${MONO};color:var(--mute)`,
+          text: c.hex,
+        }),
+      ],
+    );
+
+  const paint = (q: string) => {
+    // Hex is searchable too: "#289" should find a colour by its value.
+    const shown = filterByQuery(colours, q, ["name", "hex"]);
+    results.replaceChildren(
+      shown.length
+        ? el(
+            "div",
+            {
+              style: "display:grid;grid-template-columns:repeat(3,1fr);gap:10px",
+            },
+            shown.map(chip),
+          )
+        : empty(q ? `Nothing matches "${q}".` : "No named colours yet."),
+    );
+  };
+  paint(query);
 
   return el("div", { style: "display:flex;flex-direction:column;gap:12px" }, [
     libraryBar("LIBRARY : COLOURS", colours.length),
-    colours.length ? grid : empty("No named colours yet."),
+    renderSearchBar(query, "Search colours", {
+      complete: (q) => completionFor(q, names),
+      onQuery: (q) => {
+        paint(q);
+        search.onQuery(q);
+      },
+    }),
+    results,
   ]);
 }

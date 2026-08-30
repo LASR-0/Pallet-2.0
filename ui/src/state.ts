@@ -50,6 +50,16 @@ export interface ColourChip {
   hex: string;
 }
 
+/** The palette being assembled on the Build screen. */
+export interface BuildState {
+  colours: string[];
+  name: string;
+  min: number;
+  capacity: number;
+  picking: boolean;
+  error: string | null;
+}
+
 export interface AppState {
   screen: Screen;
   theme: Theme;
@@ -58,6 +68,9 @@ export interface AppState {
   /** `null` until the library has been read. */
   palettes: PaletteCard[] | null;
   colours: ColourChip[] | null;
+  /** Search text, kept per screen so switching tabs does not lose it. */
+  queries: Record<"palettes" | "colours", string>;
+  build: BuildState;
 }
 
 export const TABS: [Screen, string][] = [

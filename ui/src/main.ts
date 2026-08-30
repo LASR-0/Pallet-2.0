@@ -5,7 +5,9 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import * as api from "./api";
 import { el } from "./dom";
 import { renderCurrent } from "./screens/current";
+import { renderBuild } from "./screens/build";
 import { renderColours, renderPalettes } from "./screens/library";
+import { focusSearch } from "./screens/search";
 import { renderShell } from "./shell";
 import { TABS, type AppState, type Harmony, type Screen, type Theme } from "./state";
 
@@ -16,6 +18,15 @@ const state: AppState = {
   detail: null,
   palettes: null,
   colours: null,
+  queries: { palettes: "", colours: "" },
+  build: {
+    colours: [],
+    name: "Untitled",
+    min: 3,
+    capacity: 25,
+    picking: false,
+    error: null,
+  },
 };
 
 const root = document.getElementById("app");
@@ -40,14 +51,49 @@ function body(): HTMLElement {
     case "pick":
       return placeholder("Pick");
     case "palettes":
-      return renderPalettes(state.palettes, (hex) => void goToColor(hex));
+      return renderPalettes(
+        state.palettes,
+        state.queries.palettes,
+        (hex) => void goToColor(hex),
+        searchActions("palettes"),
+      );
     case "colours":
-      return renderColours(state.colours, (hex) => void goToColor(hex));
+      return renderColours(
+        state.colours,
+        state.queries.colours,
+        (hex) => void goToColor(hex),
+        searchActions("colours"),
+      );
     case "build":
-      return placeholder("Build");
+      return renderBuild(state.build, {
+        onPickNext: () => void pickNext(),
+        onSave: () => void savePalette(),
+        onRemove: (index) => {
+          state.build.colours.splice(index, 1);
+          state.build.error = null;
+          render();
+        },
+        onRename: (name) => {
+          state.build.name = name;
+        },
+      });
     case "settings":
       return placeholder("Settings");
   }
+}
+
+/**
+ * Remember the query so switching tabs and back does not lose it.
+ *
+ * Deliberately does *not* re-render: the field updates its own results, and a
+ * full re-render would replace the input mid-keystroke.
+ */
+function searchActions(screen: "palettes" | "colours") {
+  return {
+    onQuery: (value: string) => {
+      state.queries[screen] = value;
+    },
+  };
 }
 
 function render(): void {
@@ -66,6 +112,41 @@ function render(): void {
       onClose: () => void getCurrentWindow().close(),
     }),
   );
+}
+
+/** Ask the picker for a colour and add it to the palette being built. */
+async function pickNext(): Promise<void> {
+  if (state.build.picking) return;
+  state.build.picking = true;
+  state.build.error = null;
+  render();
+
+  try {
+    const hex = await api.pickColour();
+    if (hex) state.build.colours.push(hex);
+  } catch (e) {
+    state.build.error = String(e);
+  } finally {
+    state.build.picking = false;
+    render();
+  }
+}
+
+async function savePalette(): Promise<void> {
+  try {
+    await api.savePalette(state.build.name, state.build.colours);
+    state.build.colours = [];
+    state.build.error = null;
+    // The library changed, so drop the cache and pick up a fresh default name.
+    state.palettes = null;
+    state.build.name = await api.nextPaletteName().catch(() => "Untitled");
+    state.screen = "palettes";
+    render();
+    void loadPalettes();
+  } catch (e) {
+    state.build.error = String(e);
+    render();
+  }
 }
 
 async function loadPalettes(): Promise<void> {
@@ -107,12 +188,41 @@ async function setHarmony(harmony: Harmony): Promise<void> {
  */
 function installShortcuts(): void {
   window.addEventListener("keydown", (event) => {
+    // Ctrl+S saves the palette being built, the one shortcut that earns a
+    // modifier because it commits something.
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+      if (state.screen === "build") {
+        event.preventDefault();
+        void savePalette();
+      }
+      return;
+    }
     if (event.metaKey || event.ctrlKey || event.altKey) return;
 
     if (event.key.toLowerCase() === "t") {
       const next: Theme = state.theme === "sketchbook" ? "studio" : "sketchbook";
       state.theme = next;
       render();
+      return;
+    }
+
+    // "/" focuses search, the convention in tools that are keyboard-first.
+    // Autofocusing on tab entry would be more convenient but would swallow the
+    // digit shortcuts below the moment either library screen opened.
+    if (
+      event.key === "/" &&
+      (state.screen === "palettes" || state.screen === "colours")
+    ) {
+      event.preventDefault();
+      focusSearch(root!);
+      return;
+    }
+
+    // Enter is the Build screen's primary action, so the whole gather-a-palette
+    // flow works without the mouse.
+    if (event.key === "Enter" && state.screen === "build") {
+      event.preventDefault();
+      void pickNext();
       return;
     }
 
@@ -134,6 +244,13 @@ async function start(): Promise<void> {
   // so the window is never empty on a fresh install.
   const latest = (await api.latestPick().catch(() => null)) ?? "#A5236E";
   await setColor(latest);
+
+  // Limits and the default name come from the backend so they are stated once.
+  const [min, capacity] = await api.paletteLimits().catch(() => [3, 25] as const);
+  state.build.min = min;
+  state.build.capacity = capacity;
+  state.build.name = await api.nextPaletteName().catch(() => "Untitled");
+  render();
 }
 
 void start();
