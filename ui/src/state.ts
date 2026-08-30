@@ -67,6 +67,12 @@ export interface RecentPick {
 }
 
 /** The palette being assembled on the Build screen. */
+/** An export format offered by the backend. */
+export interface ExportFormat {
+  id: string;
+  label: string;
+}
+
 export interface BuildState {
   colours: string[];
   name: string;
@@ -74,6 +80,9 @@ export interface BuildState {
   capacity: number;
   picking: boolean;
   error: string | null;
+  formats: ExportFormat[];
+  /** Where the last export went, shown under the chips. */
+  exported: string | null;
 }
 
 export interface AppState {

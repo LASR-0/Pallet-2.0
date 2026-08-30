@@ -21,8 +21,7 @@ const SLOT_GAP = 8;
 /** Narrowest slot that can still carry a rotated hex label. */
 const LABEL_MIN_WIDTH = 20;
 
-/** The formats the prototype offers. Wired up in M9. */
-const EXPORTS = ["CSS vars", "Tailwind", "ASE", "JSON", "PNG"];
+
 
 function slotWidth(count: number): number {
   if (count <= 0) return CONTENT_WIDTH;
@@ -34,13 +33,14 @@ export interface BuildActions {
   onSave: () => void;
   onRemove: (index: number) => void;
   onRename: (name: string) => void;
+  onExport: (formatId: string) => void;
 }
 
 export function renderBuild(
   build: BuildState,
   actions: BuildActions,
 ): HTMLElement {
-  const { colours, name, capacity, min, picking, error } = build;
+  const { colours, name, capacity, min, picking, error, formats, exported } = build;
 
   // One slot per colour, plus the next one to fill, up to capacity.
   const slotCount = Math.min(Math.max(colours.length + 1, min), capacity);
@@ -134,10 +134,7 @@ export function renderBuild(
     }),
   ]);
 
-  const exportRow = el(
-    "div",
-    { style: "display:flex;flex-direction:column;gap:7px;padding-top:2px" },
-    [
+  const exportChildren: (HTMLElement | null)[] = [
       el("span", {
         style: `font:400 9.5px/1 ${MONO};letter-spacing:.14em;color:var(--mute)`,
         text: "EXPORT",
@@ -145,17 +142,34 @@ export function renderBuild(
       el(
         "div",
         { style: "display:flex;gap:6px;flex-wrap:wrap" },
-        EXPORTS.map((name) =>
-          el("span", {
+        formats.map((format) => {
+          // Exporting nothing would write an empty file; the chips only come
+          // alive once there is a palette to write.
+          const ready = colours.length > 0;
+          return el("span", {
+            class: ready ? "hv-copy clickable" : undefined,
             style:
               "padding:6px 10px;border-radius:999px;border:1px solid var(--line);" +
-              `font:400 10px/1 ${MONO};color:var(--mute);opacity:.5;cursor:default`,
-            text: name,
-            title: "Exports land in M9",
-          }),
-        ),
+              `font:400 10px/1 ${MONO};color:var(--mute);` +
+              (ready ? "" : "opacity:.5;cursor:default"),
+            text: format.label,
+            title: ready ? `Write a .${format.id} file` : "Pick a colour first",
+            onClick: ready ? () => actions.onExport(format.id) : undefined,
+          });
+        }),
       ),
-    ],
+      exported
+        ? el("span", {
+            style: `font:400 9.5px/1.4 ${MONO};color:var(--mute);word-break:break-all`,
+            text: exported,
+          })
+        : null,
+  ];
+
+  const exportRow = el(
+    "div",
+    { style: "display:flex;flex-direction:column;gap:7px;padding-top:2px" },
+    exportChildren.filter((c): c is HTMLElement => c !== null),
   );
 
   const children: (HTMLElement | null)[] = [

@@ -30,6 +30,8 @@ const state: AppState = {
     capacity: 25,
     picking: false,
     error: null,
+    formats: [],
+    exported: null,
   },
   recents: null,
   picking: false,
@@ -99,6 +101,7 @@ function body(): HTMLElement {
         onRename: (name) => {
           state.build.name = name;
         },
+        onExport: (format) => void exportPalette(format),
       });
     case "settings":
       return renderSettings(state.settings, (key) => void cycleSetting(key));
@@ -211,11 +214,28 @@ async function pickNext(): Promise<void> {
   }
 }
 
+/** Write the palette being built and report where it landed. */
+async function exportPalette(format: string): Promise<void> {
+  try {
+    state.build.exported = await api.exportPalette(
+      state.build.name,
+      state.build.colours,
+      format,
+    );
+    state.build.error = null;
+  } catch (e) {
+    state.build.exported = null;
+    state.build.error = String(e);
+  }
+  render();
+}
+
 async function savePalette(): Promise<void> {
   try {
     await api.savePalette(state.build.name, state.build.colours);
     state.build.colours = [];
     state.build.error = null;
+    state.build.exported = null;
     // The library changed, so drop the cache and pick up a fresh default name.
     state.palettes = null;
     state.build.name = await api.nextPaletteName().catch(() => "Untitled");
@@ -388,6 +408,7 @@ async function start(): Promise<void> {
   state.build.min = min;
   state.build.capacity = capacity;
   state.build.name = await api.nextPaletteName().catch(() => "Untitled");
+  state.build.formats = await api.exportFormats().catch(() => []);
   render();
 }
 

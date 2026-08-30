@@ -185,6 +185,23 @@ impl FromStr for Color {
     }
 }
 
+/// Serialised as a hex string.
+///
+/// A palette file is something people open and read; `"#A5236E"` is legible
+/// and pasteable, where `{"r":165,"g":35,"b":110}` is neither.
+impl serde::Serialize for Color {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.to_hex())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Color {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let text = <String as serde::Deserialize>::deserialize(deserializer)?;
+        Color::parse_hex(&text).map_err(serde::de::Error::custom)
+    }
+}
+
 impl From<Color> for Srgb<u8> {
     fn from(c: Color) -> Self {
         Srgb::new(c.r, c.g, c.b)
@@ -194,6 +211,18 @@ impl From<Color> for Srgb<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn serialises_as_a_hex_string_people_can_read() {
+        let c = Color::parse_hex("#A5236E").unwrap();
+        assert_eq!(serde_json::to_string(&c).unwrap(), "\"#A5236E\"");
+        assert_eq!(serde_json::from_str::<Color>("\"#A5236E\"").unwrap(), c);
+    }
+
+    #[test]
+    fn rejects_a_malformed_hex_rather_than_defaulting() {
+        assert!(serde_json::from_str::<Color>("\"nonsense\"").is_err());
+    }
 
     #[test]
     fn parses_the_prototype_colour() {

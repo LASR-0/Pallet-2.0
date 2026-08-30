@@ -568,6 +568,63 @@ fn save_palette(
         .map_err(|e| e.to_string())
 }
 
+/// The export formats, for the Build screen's chips.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ExportFormat {
+    id: String,
+    label: String,
+}
+
+/// Which formats can be written.
+#[tauri::command]
+fn export_formats() -> Vec<ExportFormat> {
+    pallet_export::Format::ALL
+        .into_iter()
+        .map(|f| ExportFormat {
+            id: f.id().into(),
+            label: f.label().into(),
+        })
+        .collect()
+}
+
+/// Write a palette to the exports directory.
+///
+/// Written to a known folder rather than through a file dialog: the path is in
+/// the plan, it needs no extra permission, and a picker interrupting the flow
+/// to ask "where?" every time is worse than telling the user where it went.
+#[tauri::command]
+fn export_palette(
+    name: String,
+    hexes: Vec<String>,
+    format: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<String, String> {
+    let format = pallet_export::Format::parse(&format)
+        .ok_or_else(|| format!("`{format}` is not a format Pallet writes"))?;
+
+    let swatches = hexes
+        .iter()
+        .map(|hex| {
+            Color::parse_hex(hex)
+                .map(pallet_export::Swatch::new)
+                .map_err(|e| e.to_string())
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+
+    let palette = pallet_export::Palette::new(name.trim(), swatches).with_suggested_names();
+    let bytes = pallet_export::write(&palette, format).map_err(|e| e.to_string())?;
+
+    let dir = state.paths.exports_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+
+    let stem = pallet_export::model::slug(&palette.name, 0);
+    let path = dir.join(format!("{stem}.{}", format.extension()));
+    std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+
+    Ok(path.display().to_string())
+}
+
 /// Rename a palette.
 #[tauri::command]
 fn rename_palette(
@@ -776,7 +833,9 @@ fn main() {
             recent_picks,
             save_colour,
             settings,
-            cycle_setting
+            cycle_setting,
+            export_formats,
+            export_palette
         ])
         .run(tauri::generate_context!())
         .expect("the Pallet window failed to start");

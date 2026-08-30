@@ -13,6 +13,7 @@ import type {
   Harmony,
   PaletteCard,
   RecentPick,
+  ExportFormat,
   SettingRow,
 } from "./state";
 
@@ -91,4 +92,16 @@ export async function settings(): Promise<SettingRow[]> {
 
 export async function cycleSetting(key: string): Promise<void> {
   return invoke("cycle_setting", { key });
+}
+
+export async function exportFormats(): Promise<ExportFormat[]> {
+  return invoke<ExportFormat[]>("export_formats");
+}
+
+export async function exportPalette(
+  name: string,
+  hexes: string[],
+  format: string,
+): Promise<string> {
+  return invoke<string>("export_palette", { name, hexes, format });
 }

@@ -9,7 +9,14 @@ repository.workspace = true
 description = "Palette import/export: ASE, GPL, CSS, Tailwind, SCSS, JSON, PNG."
 
 [dependencies]
+pallet-color.workspace = true
 thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+image.workspace = true
+
+[dev-dependencies]
+image.workspace = true
 
 [lints]
 workspace = true

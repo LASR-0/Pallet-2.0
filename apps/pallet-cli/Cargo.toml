@@ -22,6 +22,7 @@ image.workspace = true
 arboard.workspace = true
 pallet-ipc.workspace = true
 pallet-hotkey.workspace = true
+pallet-export.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 tracing.workspace = true

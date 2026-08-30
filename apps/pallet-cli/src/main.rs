@@ -45,6 +45,18 @@ enum Command {
     Status,
     /// Show how to bind a global shortcut in this desktop.
     Hotkey,
+    /// Write a saved palette to a file.
+    Export {
+        /// Palette name, or part of it. Omit to list what is available.
+        #[arg(long)]
+        palette: Option<String>,
+        /// Format id: css, tailwind, scss, json, gpl, ase, png.
+        #[arg(long, default_value = "json")]
+        format: String,
+        /// Destination. Defaults to the exports directory.
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
     /// Hold text on the clipboard until something replaces it.
     ///
     /// Spawned as a detached child by the copy path; not meant to be run by
@@ -154,6 +166,64 @@ fn main() -> Result<()> {
             use arboard::SetExtLinux as _;
             let mut clipboard = arboard::Clipboard::new()?;
             clipboard.set().wait().text(text)?;
+        }
+        Command::Export {
+            palette,
+            format,
+            out,
+        } => {
+            let paths = Paths::from_env_or_discover()?;
+            let store = Store::open(&paths.database_file())?;
+            let saved = store.palettes()?;
+
+            let Some(needle) = palette else {
+                println!("palettes:");
+                for p in &saved {
+                    println!("  {} ({} colours)", p.name, p.colours.len());
+                }
+                println!();
+                println!("formats:");
+                for f in pallet_export::Format::ALL {
+                    let direction = if f.readable() { "read/write" } else { "write" };
+                    println!("  {:<9} {:<10} .{}", f.id(), direction, f.extension());
+                }
+                return Ok(());
+            };
+
+            let needle_lower = needle.to_lowercase();
+            let found = saved
+                .iter()
+                .find(|p| p.name.to_lowercase().contains(&needle_lower))
+                .with_context(|| format!("no palette matching `{needle}`"))?;
+
+            let format = pallet_export::Format::parse(&format)
+                .with_context(|| format!("`{format}` is not a format Pallet writes"))?;
+
+            let swatches = found
+                .colours
+                .iter()
+                .map(|c| pallet_export::Swatch {
+                    color: c.color,
+                    name: c.name.clone(),
+                })
+                .collect();
+            let exported =
+                pallet_export::Palette::new(found.name.clone(), swatches).with_suggested_names();
+            let bytes = pallet_export::write(&exported, format)?;
+
+            let path = match out {
+                Some(path) => path,
+                None => {
+                    paths.ensure_dirs()?;
+                    paths.exports_dir().join(format!(
+                        "{}.{}",
+                        pallet_export::model::slug(&exported.name, 0),
+                        format.extension()
+                    ))
+                }
+            };
+            std::fs::write(&path, bytes).with_context(|| format!("writing {}", path.display()))?;
+            println!("{}", path.display());
         }
         Command::Hotkey => {
             let paths = Paths::from_env_or_discover()?;

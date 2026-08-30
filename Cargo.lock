@@ -2780,6 +2780,7 @@ dependencies = [
  "anyhow",
  "pallet-color",
  "pallet-core",
+ "pallet-export",
  "pallet-ipc",
  "pallet-store",
  "serde",
@@ -2815,6 +2816,7 @@ dependencies = [
  "pallet-capture",
  "pallet-color",
  "pallet-core",
+ "pallet-export",
  "pallet-hotkey",
  "pallet-ipc",
  "pallet-overlay",
@@ -2827,6 +2829,8 @@ name = "pallet-color"
 version = "0.1.0"
 dependencies = [
  "palette",
+ "serde",
+ "serde_json",
  "thiserror 2.0.20",
 ]
 
@@ -2844,6 +2848,10 @@ dependencies = [
 name = "pallet-export"
 version = "0.1.0"
 dependencies = [
+ "image",
+ "pallet-color",
+ "serde",
+ "serde_json",
  "thiserror 2.0.20",
 ]
 

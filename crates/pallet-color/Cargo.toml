@@ -11,6 +11,10 @@ description = "Colour science for Pallet: conversions, harmony, ramps, naming, c
 [dependencies]
 thiserror.workspace = true
 palette.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
 
 [lints]
 workspace = true
