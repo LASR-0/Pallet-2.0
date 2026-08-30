@@ -34,11 +34,30 @@ export interface ColorDetail {
   ramp: RampStep[];
 }
 
+/** A palette card on the Palettes screen. */
+export interface PaletteCard {
+  id: string;
+  num: string;
+  name: string;
+  meta: string;
+  colors: string[];
+}
+
+/** A swatch on the Colours screen. */
+export interface ColourChip {
+  id: string;
+  name: string;
+  hex: string;
+}
+
 export interface AppState {
   screen: Screen;
   theme: Theme;
   harmony: Harmony;
   detail: ColorDetail | null;
+  /** `null` until the library has been read. */
+  palettes: PaletteCard[] | null;
+  colours: ColourChip[] | null;
 }
 
 export const TABS: [Screen, string][] = [

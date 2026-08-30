@@ -222,3 +222,48 @@ fn seeding_populates_the_prototypes_library_exactly_once() {
     );
     assert_eq!(s.palettes().unwrap().len(), 4);
 }
+
+#[test]
+fn seeded_palettes_carry_the_prototypes_dates_and_order() {
+    // The Palettes screen shows "5 · 2019" and numbers Winter Sunset 01. Both
+    // come from created_at, so a fresh library only matches the design if the
+    // seed carries the original years and a stable order within a year.
+    let s = store();
+    pallet_store::seed::seed_if_empty(&s).unwrap();
+
+    let mut palettes = s.palettes().unwrap();
+    palettes.reverse(); // the library returns newest first
+
+    let shown: Vec<(String, i32, usize)> = palettes
+        .iter()
+        .map(|p| (p.name.clone(), p.created_at.year(), p.colours.len()))
+        .collect();
+
+    assert_eq!(
+        shown,
+        vec![
+            ("Winter Sunset".to_string(), 2019, 5),
+            ("Bussel".to_string(), 2019, 5),
+            ("Glasshouse".to_string(), 2020, 5),
+            ("Rob Roy".to_string(), 2021, 5),
+        ]
+    );
+}
+
+#[test]
+fn seeded_colours_keep_the_prototypes_order() {
+    let s = store();
+    pallet_store::seed::seed_if_empty(&s).unwrap();
+
+    let mut named: Vec<String> = s
+        .colours()
+        .unwrap()
+        .into_iter()
+        .filter_map(|c| c.name)
+        .collect();
+    named.reverse(); // insertion order, as the Colours screen shows it
+
+    assert_eq!(named.first().map(String::as_str), Some("Dim Red"));
+    assert_eq!(named.last().map(String::as_str), Some("Rob Roy"));
+    assert_eq!(named.len(), 9);
+}

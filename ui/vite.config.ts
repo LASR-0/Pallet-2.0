@@ -3,7 +3,7 @@ import { defineConfig } from "vite";
 // Tauri serves this over a custom protocol in production and from the dev
 // server while developing, so assets must be referenced relatively.
 export default defineConfig({
-  base: "./",
+  base: "/",
   build: {
     outDir: "dist",
     emptyOutDir: true,

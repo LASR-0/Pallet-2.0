@@ -127,8 +127,24 @@ impl Store {
 
     /// Create a palette from colours already in the library.
     pub fn create_palette(&self, name: &str, colour_ids: &[String]) -> Result<String> {
+        self.create_palette_at(name, colour_ids, OffsetDateTime::now_utc())
+    }
+
+    /// Create a palette with an explicit creation time.
+    ///
+    /// Needed wherever a palette predates its arrival in the library — seeded
+    /// samples, and later an import that carries its own dates.
+    pub fn create_palette_at(
+        &self,
+        name: &str,
+        colour_ids: &[String],
+        created_at: OffsetDateTime,
+    ) -> Result<String> {
         let id = Uuid::new_v4().to_string();
-        let stamp = now();
+        let stamp = created_at.format(&Rfc3339).map_err(|_| Error::NotFound {
+            kind: "timestamp",
+            id: "unformattable".into(),
+        })?;
         self.conn.execute(
             "INSERT INTO palettes (id, name, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?3)",

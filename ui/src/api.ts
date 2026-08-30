@@ -7,7 +7,7 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
-import type { ColorDetail, Harmony } from "./state";
+import type { ColorDetail, ColourChip, Harmony, PaletteCard } from "./state";
 
 export async function colorDetail(
   hex: string,
@@ -18,4 +18,12 @@ export async function colorDetail(
 
 export async function latestPick(): Promise<string | null> {
   return invoke<string | null>("latest_pick");
+}
+
+export async function palettes(): Promise<PaletteCard[]> {
+  return invoke<PaletteCard[]>("palettes");
+}
+
+export async function colours(): Promise<ColourChip[]> {
+  return invoke<ColourChip[]>("colours");
 }
