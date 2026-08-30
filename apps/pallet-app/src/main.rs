@@ -191,6 +191,100 @@ fn colours(state: tauri::State<'_, AppState>) -> Result<Vec<ColourChip>, String>
         .collect())
 }
 
+/// How many colours a palette may hold.
+///
+/// Three is the smallest group that reads as a palette rather than a pair;
+/// twenty-five is where the strip stops being legible at window width and a
+/// palette stops being a palette.
+const MIN_PALETTE: usize = 3;
+const MAX_PALETTE: usize = 25;
+
+/// Ask the resident picker for a colour.
+///
+/// Async because a pick lasts as long as the user takes: on a blocking command
+/// Tauri would hold a worker thread and the window would stop responding until
+/// they clicked.
+#[tauri::command]
+async fn pick_colour() -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        use std::os::unix::net::UnixStream;
+
+        let mut stream = UnixStream::connect(pallet_ipc::transport::socket_path())
+            .map_err(|_| "no picker is running — start pallet-picker".to_string())?;
+
+        pallet_ipc::write_message(
+            &mut stream,
+            &pallet_ipc::Request::Pick(pallet_ipc::PickOptions::default()),
+        )
+        .map_err(|e| e.to_string())?;
+
+        match pallet_ipc::read_message::<_, pallet_ipc::Response>(&mut stream)
+            .map_err(|e| e.to_string())?
+        {
+            pallet_ipc::Response::Picked { hex, .. } => Ok(Some(hex)),
+            pallet_ipc::Response::Cancelled => Ok(None),
+            pallet_ipc::Response::Error { message } => Err(message),
+            pallet_ipc::Response::Pong { .. } => Err("unexpected reply".into()),
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// The limits the Build screen enforces, so the frontend need not restate them.
+#[tauri::command]
+fn palette_limits() -> (usize, usize) {
+    (MIN_PALETTE, MAX_PALETTE)
+}
+
+/// A default name for the next palette, matching the prototype's "Untitled 13".
+#[tauri::command]
+fn next_palette_name(state: tauri::State<'_, AppState>) -> Result<String, String> {
+    let store = state
+        .store
+        .lock()
+        .map_err(|_| "the colour library is unavailable".to_string())?;
+    let count = store.palettes().map_err(|e| e.to_string())?.len();
+    Ok(format!("Untitled {}", count + 1))
+}
+
+/// Save a built palette.
+///
+/// Colours are added to the library as unnamed entries: a palette member is a
+/// colour in its own right, and naming every one of them would be busywork.
+#[tauri::command]
+fn save_palette(
+    name: String,
+    hexes: Vec<String>,
+    state: tauri::State<'_, AppState>,
+) -> Result<String, String> {
+    if hexes.len() < MIN_PALETTE {
+        return Err(format!("a palette needs at least {MIN_PALETTE} colours"));
+    }
+    if hexes.len() > MAX_PALETTE {
+        return Err(format!("a palette holds at most {MAX_PALETTE} colours"));
+    }
+
+    let store = state
+        .store
+        .lock()
+        .map_err(|_| "the colour library is unavailable".to_string())?;
+
+    let mut ids = Vec::with_capacity(hexes.len());
+    for hex in &hexes {
+        let color = Color::parse_hex(hex).map_err(|e| e.to_string())?;
+        ids.push(
+            store
+                .add_colour(&pallet_store::NewColour::new(color))
+                .map_err(|e| e.to_string())?,
+        );
+    }
+
+    store
+        .create_palette(name.trim(), &ids)
+        .map_err(|e| e.to_string())
+}
+
 /// The most recent pick, so the window opens showing something real.
 #[tauri::command]
 fn latest_pick(state: tauri::State<'_, AppState>) -> Result<Option<String>, String> {
@@ -281,7 +375,11 @@ fn main() {
             latest_pick,
             contrast_report,
             palettes,
-            colours
+            colours,
+            pick_colour,
+            palette_limits,
+            next_palette_name,
+            save_palette
         ])
         .run(tauri::generate_context!())
         .expect("the Pallet window failed to start");
