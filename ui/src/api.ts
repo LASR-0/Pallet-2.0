@@ -13,6 +13,7 @@ import type {
   Harmony,
   PaletteCard,
   RecentPick,
+  SettingRow,
 } from "./state";
 
 export async function colorDetail(
@@ -82,4 +83,12 @@ export async function recentPicks(limit = 24): Promise<RecentPick[]> {
 
 export async function saveColour(hex: string): Promise<string> {
   return invoke<string>("save_colour", { hex });
+}
+
+export async function settings(): Promise<SettingRow[]> {
+  return invoke<SettingRow[]>("settings");
+}
+
+export async function cycleSetting(key: string): Promise<void> {
+  return invoke("cycle_setting", { key });
 }

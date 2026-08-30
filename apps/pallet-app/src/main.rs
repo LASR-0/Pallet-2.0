@@ -48,7 +48,194 @@ struct ColorDetail {
 /// problem that does not exist here.
 struct AppState {
     store: std::sync::Mutex<Store>,
-    space: Space,
+    /// The live settings. Held rather than only their derived values so the
+    /// Settings screen can edit them and everything else sees the change.
+    config: std::sync::Mutex<Config>,
+    paths: pallet_core::Paths,
+}
+
+impl AppState {
+    /// The colour space harmony and ramps are computed in.
+    fn space(&self) -> Space {
+        self.config
+            .lock()
+            .map(|c| c.color.space.into())
+            .unwrap_or_default()
+    }
+}
+
+/// One row of the Settings screen.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SettingRow {
+    key: String,
+    label: String,
+    hint: String,
+    /// What the control shows, e.g. "ON", "16x", "CTRL + SHIFT + P".
+    value: String,
+    /// Lit like the prototype's ON pill.
+    on: bool,
+    /// False for rows that only report, such as the compositor-owned shortcut.
+    editable: bool,
+}
+
+/// The Settings screen's rows, in order.
+#[tauri::command]
+fn settings(state: tauri::State<'_, AppState>) -> Result<Vec<SettingRow>, String> {
+    let c = state
+        .config
+        .lock()
+        .map_err(|_| "settings are unavailable".to_string())?;
+
+    let toggle = |on: bool| (if on { "ON" } else { "OFF" }.to_string(), on);
+    let (copy_v, copy_on) = toggle(c.picker.copy_on_pick);
+    let (name_v, name_on) = toggle(c.color.name_new_colors);
+    let (top_v, top_on) = toggle(c.general.stay_on_top);
+
+    let row =
+        |key: &str, label: &str, hint: &str, value: String, on: bool, editable: bool| SettingRow {
+            key: key.into(),
+            label: label.into(),
+            hint: hint.into(),
+            value,
+            on,
+            editable,
+        };
+
+    Ok(vec![
+        // The prototype's six, in its order.
+        row(
+            "shortcut",
+            "Global pick shortcut",
+            "Your compositor owns this — run `pallet hotkey`",
+            c.picker.shortcut.clone(),
+            false,
+            false,
+        ),
+        row(
+            "loupe_zoom",
+            "Loupe zoom",
+            "Magnification at rest",
+            format!("{}×", c.picker.loupe_zoom),
+            false,
+            true,
+        ),
+        row(
+            "copy_on_pick",
+            "Copy on pick",
+            "Puts hex on the clipboard immediately",
+            copy_v,
+            copy_on,
+            true,
+        ),
+        row(
+            "multi_pick_length",
+            "Multi-pick length",
+            "Colours gathered in one pass",
+            c.picker.multi_pick_length.to_string(),
+            false,
+            true,
+        ),
+        row(
+            "name_new_colors",
+            "Name new colours",
+            "Matches the nearest named colour",
+            name_v,
+            name_on,
+            true,
+        ),
+        row(
+            "stay_on_top",
+            "Stay on top",
+            "Window floats above other apps",
+            top_v,
+            top_on,
+            true,
+        ),
+        // Settings that exist but the prototype never drew. Leaving them
+        // unreachable would mean editing config.toml by hand to change how
+        // colours are reported.
+        row(
+            "theme",
+            "Theme",
+            "Sketchbook is warm, Studio is dark",
+            format!("{:?}", c.general.theme).to_uppercase(),
+            false,
+            true,
+        ),
+        row(
+            "average_size",
+            "Shift-average size",
+            "Square sampled while Shift is held",
+            format!("{}×{}", c.picker.average_size, c.picker.average_size),
+            false,
+            true,
+        ),
+        row(
+            "space",
+            "Harmony and ramps",
+            "Oklch is perceptually even; HSL matches other tools",
+            format!("{:?}", c.color.space).to_uppercase(),
+            false,
+            true,
+        ),
+        row(
+            "report_space",
+            "Report colours as",
+            "sRGB is what a designer pastes into CSS",
+            match c.picker.report_space {
+                pallet_store::config::ReportSpace::Srgb => "sRGB".into(),
+                pallet_store::config::ReportSpace::Display => "DISPLAY".into(),
+            },
+            false,
+            true,
+        ),
+    ])
+}
+
+/// Advance one setting to its next value and save.
+///
+/// Every control cycles rather than opening an editor: the values are all
+/// short lists or toggles, and one interaction model keeps the row compact
+/// enough to match the prototype's design.
+#[tauri::command]
+fn cycle_setting(key: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    use pallet_store::config::{ReportSpace, Space as CfgSpace, Theme};
+
+    let mut c = state
+        .config
+        .lock()
+        .map_err(|_| "settings are unavailable".to_string())?;
+
+    /// Step through a list, wrapping.
+    fn next<T: PartialEq + Copy>(current: T, options: &[T]) -> T {
+        let i = options.iter().position(|o| *o == current).unwrap_or(0);
+        options[(i + 1) % options.len()]
+    }
+
+    match key.as_str() {
+        "loupe_zoom" => c.picker.loupe_zoom = next(c.picker.loupe_zoom, &[2, 4, 8, 16, 32, 64]),
+        "copy_on_pick" => c.picker.copy_on_pick = !c.picker.copy_on_pick,
+        "multi_pick_length" => {
+            c.picker.multi_pick_length = next(c.picker.multi_pick_length, &[3, 5, 8, 12, 25]);
+        }
+        "name_new_colors" => c.color.name_new_colors = !c.color.name_new_colors,
+        "stay_on_top" => c.general.stay_on_top = !c.general.stay_on_top,
+        "theme" => c.general.theme = next(c.general.theme, &[Theme::Sketchbook, Theme::Studio]),
+        // Odd sizes only: an even square has no centre pixel to anchor on.
+        "average_size" => c.picker.average_size = next(c.picker.average_size, &[1, 3, 5, 7, 9]),
+        "space" => c.color.space = next(c.color.space, &[CfgSpace::Oklch, CfgSpace::Hsl]),
+        "report_space" => {
+            c.picker.report_space = next(
+                c.picker.report_space,
+                &[ReportSpace::Srgb, ReportSpace::Display],
+            );
+        }
+        other => return Err(format!("`{other}` is not an editable setting")),
+    }
+
+    c.save(&state.paths.config_file())
+        .map_err(|e| e.to_string())
 }
 
 /// Compute everything the Current screen needs for a colour.
@@ -102,11 +289,11 @@ fn color_detail(
             },
         ],
         harmony: harmony
-            .swatches(color, state.space)
+            .swatches(color, state.space())
             .iter()
             .map(|c| c.to_hex())
             .collect(),
-        ramp: ramp::ramp(color, state.space)
+        ramp: ramp::ramp(color, state.space())
             .into_iter()
             .map(|s| RampStep {
                 step: s.step,
@@ -561,7 +748,8 @@ fn main() {
 
             app.manage(AppState {
                 store: std::sync::Mutex::new(store),
-                space: loaded.config.color.space.into(),
+                config: std::sync::Mutex::new(loaded.config),
+                paths,
             });
 
             tracing::info!(
@@ -586,7 +774,9 @@ fn main() {
             rename_colour,
             delete_colour,
             recent_picks,
-            save_colour
+            save_colour,
+            settings,
+            cycle_setting
         ])
         .run(tauri::generate_context!())
         .expect("the Pallet window failed to start");

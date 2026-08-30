@@ -3,11 +3,11 @@ import "./styles/base.css";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import * as api from "./api";
-import { el } from "./dom";
 import { renderCurrent } from "./screens/current";
 import { installMenuDismiss } from "./menu";
 import { renderBuild } from "./screens/build";
 import { renderPick } from "./screens/pick";
+import { renderSettings } from "./screens/settings";
 import { renderColours, renderPalettes } from "./screens/library";
 import { focusSearch } from "./screens/search";
 import { renderShell } from "./shell";
@@ -33,18 +33,11 @@ const state: AppState = {
   },
   recents: null,
   picking: false,
+  settings: null,
 };
 
 const root = document.getElementById("app");
 if (!root) throw new Error("#app is missing from index.html");
-
-function placeholder(label: string): HTMLElement {
-  return el("div", {
-    style:
-      "padding:28px 4px;font:400 12px/1.5 var(--font),sans-serif;color:var(--mute);text-align:center",
-    text: `${label} lands in a later milestone.`,
-  });
-}
 
 function body(): HTMLElement {
   switch (state.screen) {
@@ -108,7 +101,7 @@ function body(): HTMLElement {
         },
       });
     case "settings":
-      return placeholder("Settings");
+      return renderSettings(state.settings, (key) => void cycleSetting(key));
   }
 }
 
@@ -138,6 +131,7 @@ function render(): void {
         if (screen === "palettes" && state.palettes === null) void loadPalettes();
         if (screen === "colours" && state.colours === null) void loadColours();
         if (screen === "pick" && state.recents === null) void loadRecents();
+        if (screen === "settings" && state.settings === null) void loadSettings();
       },
       onMinimise: () => void getCurrentWindow().minimize(),
       onClose: () => void getCurrentWindow().close(),
@@ -164,6 +158,34 @@ async function pickFromScreen(): Promise<void> {
     state.picking = false;
   }
   await loadRecents();
+}
+
+async function loadSettings(): Promise<void> {
+  state.settings = await api.settings().catch(() => []);
+  render();
+}
+
+/**
+ * Change a setting and re-read everything it can affect.
+ *
+ * The theme and the colour space both change what is already on screen, so the
+ * cached Current detail is recomputed rather than left stale.
+ */
+async function cycleSetting(key: string): Promise<void> {
+  try {
+    await api.cycleSetting(key);
+  } catch (e) {
+    console.error(String(e));
+    return;
+  }
+  await loadSettings();
+
+  const rows = state.settings ?? [];
+  const theme = rows.find((r) => r.key === "theme")?.value.toLowerCase();
+  if (theme === "sketchbook" || theme === "studio") state.theme = theme;
+
+  if (state.detail) state.detail = await api.colorDetail(state.detail.hex, state.harmony);
+  render();
 }
 
 async function loadRecents(): Promise<void> {
@@ -341,6 +363,7 @@ function installShortcuts(): void {
     if (state.screen === "palettes" && state.palettes === null) void loadPalettes();
     if (state.screen === "colours" && state.colours === null) void loadColours();
     if (state.screen === "pick" && state.recents === null) void loadRecents();
+    if (state.screen === "settings" && state.settings === null) void loadSettings();
   });
 }
 
@@ -355,6 +378,12 @@ async function start(): Promise<void> {
   await setColor(latest);
 
   // Limits and the default name come from the backend so they are stated once.
+  await loadSettings();
+  const theme = state.settings
+    ?.find((r) => r.key === "theme")
+    ?.value.toLowerCase();
+  if (theme === "sketchbook" || theme === "studio") state.theme = theme;
+
   const [min, capacity] = await api.paletteLimits().catch(() => [3, 25] as const);
   state.build.min = min;
   state.build.capacity = capacity;

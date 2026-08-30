@@ -50,6 +50,16 @@ export interface ColourChip {
   hex: string;
 }
 
+/** One row of the Settings screen. */
+export interface SettingRow {
+  key: string;
+  label: string;
+  hint: string;
+  value: string;
+  on: boolean;
+  editable: boolean;
+}
+
 /** One entry in the pick history. */
 export interface RecentPick {
   id: string;
@@ -83,6 +93,7 @@ export interface AppState {
   build: BuildState;
   recents: RecentPick[] | null;
   picking: boolean;
+  settings: SettingRow[] | null;
 }
 
 export const TABS: [Screen, string][] = [
