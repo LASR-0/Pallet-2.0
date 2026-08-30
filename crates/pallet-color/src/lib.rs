@@ -25,6 +25,7 @@
 pub mod color;
 pub mod contrast;
 pub mod error;
+pub mod facets;
 pub mod harmony;
 pub mod naming;
 pub mod ramp;
@@ -32,5 +33,6 @@ pub mod space;
 
 pub use color::Color;
 pub use error::ParseError;
+pub use facets::{Facet, Sort};
 pub use harmony::Harmony;
 pub use space::Space;

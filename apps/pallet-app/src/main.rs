@@ -138,7 +138,11 @@ struct ColourChip {
 
 /// Every palette, newest first.
 #[tauri::command]
-fn palettes(state: tauri::State<'_, AppState>) -> Result<Vec<PaletteCard>, String> {
+fn palettes(
+    facets: Vec<String>,
+    sort: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<PaletteCard>, String> {
     let store = state
         .store
         .lock()
@@ -150,7 +154,7 @@ fn palettes(state: tauri::State<'_, AppState>) -> Result<Vec<PaletteCard>, Strin
     // cards in: Winter Sunset is 01.
     palettes.reverse();
 
-    Ok(palettes
+    let cards: Vec<PaletteCard> = palettes
         .into_iter()
         .enumerate()
         .map(|(i, p)| PaletteCard {
@@ -160,7 +164,44 @@ fn palettes(state: tauri::State<'_, AppState>) -> Result<Vec<PaletteCard>, Strin
             id: p.id,
             name: p.name,
         })
-        .collect())
+        .collect();
+
+    // A palette is filtered by its first swatch, which is the one a person
+    // reads it by. Judging it by every member would match almost everything
+    // once a palette has more than a few colours.
+    let mut cards = arrange(cards, &facets, &sort, |c| {
+        c.colors
+            .first()
+            .and_then(|h| Color::parse_hex(h).ok())
+            .unwrap_or(Color::new(0, 0, 0))
+    });
+    if sort == "name" {
+        cards.sort_by_key(|c| c.name.to_lowercase());
+    }
+    Ok(cards)
+}
+
+/// Apply the UI's facet chips and sort choice to a list of colours.
+fn arrange<T, F>(mut items: Vec<T>, facets: &[String], sort: &str, colour_of: F) -> Vec<T>
+where
+    F: Fn(&T) -> Color,
+{
+    let facets: Vec<pallet_color::Facet> = facets
+        .iter()
+        .filter_map(|f| pallet_color::Facet::parse(f))
+        .collect();
+    items.retain(|item| pallet_color::facets::matches_all(colour_of(item), &facets));
+
+    if let Some(sort) = pallet_color::Sort::parse(sort)
+        && sort != pallet_color::Sort::Added
+    {
+        items.sort_by(|a, b| {
+            let (ka, kb) = (sort.key(colour_of(a)), sort.key(colour_of(b)));
+            ka.0.cmp(&kb.0)
+                .then(ka.1.partial_cmp(&kb.1).unwrap_or(std::cmp::Ordering::Equal))
+        });
+    }
+    items
 }
 
 /// Every named colour in the library, newest first.
@@ -169,7 +210,11 @@ fn palettes(state: tauri::State<'_, AppState>) -> Result<Vec<PaletteCard>, Strin
 /// swatches, and a palette's members are shown on its own card rather than
 /// duplicated here.
 #[tauri::command]
-fn colours(state: tauri::State<'_, AppState>) -> Result<Vec<ColourChip>, String> {
+fn colours(
+    facets: Vec<String>,
+    sort: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<ColourChip>, String> {
     let store = state
         .store
         .lock()
@@ -179,7 +224,7 @@ fn colours(state: tauri::State<'_, AppState>) -> Result<Vec<ColourChip>, String>
     // Insertion order, as above.
     colours.reverse();
 
-    Ok(colours
+    let chips: Vec<ColourChip> = colours
         .into_iter()
         .filter_map(|c| {
             c.name.map(|name| ColourChip {
@@ -188,7 +233,15 @@ fn colours(state: tauri::State<'_, AppState>) -> Result<Vec<ColourChip>, String>
                 hex: c.color.to_hex(),
             })
         })
-        .collect())
+        .collect();
+
+    let mut chips = arrange(chips, &facets, &sort, |c| {
+        Color::parse_hex(&c.hex).unwrap_or(Color::new(0, 0, 0))
+    });
+    if sort == "name" {
+        chips.sort_by_key(|c| c.name.to_lowercase());
+    }
+    Ok(chips)
 }
 
 /// How many colours a palette may hold.
@@ -199,6 +252,52 @@ fn colours(state: tauri::State<'_, AppState>) -> Result<Vec<ColourChip>, String>
 const MIN_PALETTE: usize = 3;
 const MAX_PALETTE: usize = 25;
 
+/// Connect to the picker, starting it if it is not already running.
+///
+/// The picker is a separate process holding a warm GPU context, but that is an
+/// implementation detail of how picking is made fast — not something a user
+/// should have to know about or launch. Without this, the Build screen's
+/// primary action fails with an error telling them to go run a daemon.
+#[cfg(unix)]
+fn connect_to_picker() -> Result<std::os::unix::net::UnixStream, String> {
+    use std::os::unix::net::UnixStream;
+
+    let socket = pallet_ipc::transport::socket_path();
+    if let Ok(stream) = UnixStream::connect(&socket) {
+        return Ok(stream);
+    }
+
+    // Beside this binary, so a build tree and an installed bundle both work.
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let picker = exe
+        .parent()
+        .ok_or("could not locate the picker binary")?
+        .join("pallet-picker");
+    if !picker.exists() {
+        return Err(format!("the picker is missing from {}", picker.display()));
+    }
+
+    tracing::info!("starting the picker");
+    std::process::Command::new(&picker)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| format!("could not start the picker: {e}"))?;
+
+    // It builds a GPU context before it listens, which measured about 190 ms.
+    // Poll rather than sleep a fixed time so a fast machine is not penalised
+    // and a slow one still succeeds.
+    for _ in 0..100 {
+        if let Ok(stream) = UnixStream::connect(&socket) {
+            return Ok(stream);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+
+    Err("the picker did not start in time".into())
+}
+
 /// Ask the resident picker for a colour.
 ///
 /// Async because a pick lasts as long as the user takes: on a blocking command
@@ -207,10 +306,7 @@ const MAX_PALETTE: usize = 25;
 #[tauri::command]
 async fn pick_colour() -> Result<Option<String>, String> {
     tauri::async_runtime::spawn_blocking(|| {
-        use std::os::unix::net::UnixStream;
-
-        let mut stream = UnixStream::connect(pallet_ipc::transport::socket_path())
-            .map_err(|_| "no picker is running — start pallet-picker".to_string())?;
+        let mut stream = connect_to_picker()?;
 
         pallet_ipc::write_message(
             &mut stream,
@@ -282,6 +378,111 @@ fn save_palette(
 
     store
         .create_palette(name.trim(), &ids)
+        .map_err(|e| e.to_string())
+}
+
+/// Rename a palette.
+#[tauri::command]
+fn rename_palette(
+    id: String,
+    name: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("a palette needs a name".into());
+    }
+    state
+        .store
+        .lock()
+        .map_err(|_| "the colour library is unavailable".to_string())?
+        .rename_palette(&id, name)
+        .map_err(|e| e.to_string())
+}
+
+/// Delete a palette. Its colours stay in the library.
+#[tauri::command]
+fn delete_palette(id: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    state
+        .store
+        .lock()
+        .map_err(|_| "the colour library is unavailable".to_string())?
+        .delete_palette(&id)
+        .map_err(|e| e.to_string())
+}
+
+/// Rename a colour.
+#[tauri::command]
+fn rename_colour(
+    id: String,
+    name: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("a colour needs a name".into());
+    }
+    state
+        .store
+        .lock()
+        .map_err(|_| "the colour library is unavailable".to_string())?
+        .rename_colour(&id, Some(name))
+        .map_err(|e| e.to_string())
+}
+
+/// Delete a colour. It is removed from any palette holding it.
+#[tauri::command]
+fn delete_colour(id: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    state
+        .store
+        .lock()
+        .map_err(|_| "the colour library is unavailable".to_string())?
+        .delete_colour(&id)
+        .map_err(|e| e.to_string())
+}
+
+/// One entry in the pick history.
+#[derive(Debug, Serialize)]
+struct RecentPick {
+    id: String,
+    hex: String,
+}
+
+/// The pick history, newest first.
+#[tauri::command]
+fn recent_picks(
+    limit: usize,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<RecentPick>, String> {
+    Ok(state
+        .store
+        .lock()
+        .map_err(|_| "the colour library is unavailable".to_string())?
+        .recent_picks(limit)
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .map(|p| RecentPick {
+            id: p.id,
+            hex: p.color.to_hex(),
+        })
+        .collect())
+}
+
+/// Keep a picked colour in the library.
+///
+/// The suggested name is the nearest match, which the user is expected to
+/// change; naming is a suggestion, not a verdict.
+#[tauri::command]
+fn save_colour(hex: String, state: tauri::State<'_, AppState>) -> Result<String, String> {
+    let color = Color::parse_hex(&hex).map_err(|e| e.to_string())?;
+    let mut colour = pallet_store::NewColour::new(color);
+    colour.name = naming::nearest(color).map(|m| m.named.name.to_string());
+
+    state
+        .store
+        .lock()
+        .map_err(|_| "the colour library is unavailable".to_string())?
+        .add_colour(&colour)
         .map_err(|e| e.to_string())
 }
 
@@ -379,7 +580,13 @@ fn main() {
             pick_colour,
             palette_limits,
             next_palette_name,
-            save_palette
+            save_palette,
+            rename_palette,
+            delete_palette,
+            rename_colour,
+            delete_colour,
+            recent_picks,
+            save_colour
         ])
         .run(tauri::generate_context!())
         .expect("the Pallet window failed to start");

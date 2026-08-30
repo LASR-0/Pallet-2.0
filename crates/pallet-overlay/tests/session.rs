@@ -225,11 +225,13 @@ fn committing_returns_the_colour_and_where_it_came_from() {
             color,
             at,
             source_space,
+            save,
         }) => {
             assert_eq!(*color, Color::new(50, 20, 0x40));
             assert_eq!(*at, (150, 20));
             // The wide-gamut provenance must survive to the library.
             assert_eq!(source_space.as_deref(), Some("display-p3"));
+            assert!(!save, "a plain commit copies but does not keep");
         }
         other => panic!("expected a pick, got {other:?}"),
     }
@@ -273,5 +275,28 @@ fn input_after_the_session_ends_is_ignored() {
 fn committing_with_nothing_under_the_cursor_cancels_rather_than_inventing_a_colour() {
     let mut s = Session::new(Capture::default(), (0, 0), 16, 5);
     s.apply(Input::Commit);
+    assert_eq!(s.outcome(), Some(&Outcome::Cancelled));
+}
+
+#[test]
+fn committing_with_save_asks_for_the_colour_to_be_kept() {
+    // "S" in the loupe means take it *and* keep it, so the user does not have
+    // to come back to the window to file a colour they already decided on.
+    let mut s = session();
+    s.apply(Input::CommitAndSave);
+
+    match s.outcome() {
+        Some(Outcome::Picked { save, color, .. }) => {
+            assert!(save);
+            assert_eq!(*color, Color::new(10, 10, 0x40));
+        }
+        other => panic!("expected a saved pick, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_save_commit_with_nothing_under_the_cursor_still_cancels() {
+    let mut s = Session::new(Capture::default(), (0, 0), 16, 5);
+    s.apply(Input::CommitAndSave);
     assert_eq!(s.outcome(), Some(&Outcome::Cancelled));
 }

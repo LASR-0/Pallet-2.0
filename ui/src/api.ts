@@ -7,7 +7,13 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
-import type { ColorDetail, ColourChip, Harmony, PaletteCard } from "./state";
+import type {
+  ColorDetail,
+  ColourChip,
+  Harmony,
+  PaletteCard,
+  RecentPick,
+} from "./state";
 
 export async function colorDetail(
   hex: string,
@@ -20,12 +26,18 @@ export async function latestPick(): Promise<string | null> {
   return invoke<string | null>("latest_pick");
 }
 
-export async function palettes(): Promise<PaletteCard[]> {
-  return invoke<PaletteCard[]>("palettes");
+export async function palettes(
+  facets: string[],
+  sort: string,
+): Promise<PaletteCard[]> {
+  return invoke<PaletteCard[]>("palettes", { facets, sort });
 }
 
-export async function colours(): Promise<ColourChip[]> {
-  return invoke<ColourChip[]>("colours");
+export async function colours(
+  facets: string[],
+  sort: string,
+): Promise<ColourChip[]> {
+  return invoke<ColourChip[]>("colours", { facets, sort });
 }
 
 /** Blocks until the user commits or abandons the pick. */
@@ -46,4 +58,28 @@ export async function savePalette(
   hexes: string[],
 ): Promise<string> {
   return invoke<string>("save_palette", { name, hexes });
+}
+
+export async function renamePalette(id: string, name: string): Promise<void> {
+  return invoke("rename_palette", { id, name });
+}
+
+export async function deletePalette(id: string): Promise<void> {
+  return invoke("delete_palette", { id });
+}
+
+export async function renameColour(id: string, name: string): Promise<void> {
+  return invoke("rename_colour", { id, name });
+}
+
+export async function deleteColour(id: string): Promise<void> {
+  return invoke("delete_colour", { id });
+}
+
+export async function recentPicks(limit = 24): Promise<RecentPick[]> {
+  return invoke<RecentPick[]>("recent_picks", { limit });
+}
+
+export async function saveColour(hex: string): Promise<string> {
+  return invoke<string>("save_colour", { hex });
 }

@@ -39,6 +39,8 @@ pub enum Input {
     Averaging(bool),
     /// Take the colour under the cursor.
     Commit,
+    /// Take it and add it to the library in one action.
+    CommitAndSave,
     /// Abandon the pick.
     Cancel,
 }
@@ -54,6 +56,8 @@ pub enum Outcome {
         at: (i32, i32),
         /// The display profile of the monitor it came from.
         source_space: Option<String>,
+        /// The user asked for it to be kept, not just copied.
+        save: bool,
     },
     /// The user backed out.
     Cancelled,
@@ -174,12 +178,14 @@ impl Session {
             Input::ZoomIn => self.zoom = (self.zoom * 2).min(MAX_ZOOM),
             Input::ZoomOut => self.zoom = (self.zoom / 2).max(MIN_ZOOM),
             Input::Averaging(on) => self.averaging = on,
-            Input::Commit => {
+            Input::Commit | Input::CommitAndSave => {
+                let save = input == Input::CommitAndSave;
                 self.outcome = Some(match self.current_color() {
                     Some(color) => Outcome::Picked {
                         color,
                         at: self.cursor,
                         source_space: self.frame().and_then(|f| f.monitor.profile.tag()),
+                        save,
                     },
                     // Nothing under the cursor is not a colour worth returning.
                     None => Outcome::Cancelled,

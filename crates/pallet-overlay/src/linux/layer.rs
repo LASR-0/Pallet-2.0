@@ -667,6 +667,8 @@ impl KeyboardHandler for Picker {
         let input = match event.keysym {
             Keysym::Escape | Keysym::q => Some(Input::Cancel),
             Keysym::Return | Keysym::KP_Enter | Keysym::space => Some(Input::Commit),
+            // Take the colour and keep it, without a second trip to the window.
+            Keysym::s | Keysym::S => Some(Input::CommitAndSave),
             Keysym::Left => Some(Input::Nudge { dx: -1, dy: 0 }),
             Keysym::Right => Some(Input::Nudge { dx: 1, dy: 0 }),
             Keysym::Up => Some(Input::Nudge { dx: 0, dy: -1 }),

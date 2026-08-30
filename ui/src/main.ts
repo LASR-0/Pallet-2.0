@@ -5,7 +5,9 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import * as api from "./api";
 import { el } from "./dom";
 import { renderCurrent } from "./screens/current";
+import { installMenuDismiss } from "./menu";
 import { renderBuild } from "./screens/build";
+import { renderPick } from "./screens/pick";
 import { renderColours, renderPalettes } from "./screens/library";
 import { focusSearch } from "./screens/search";
 import { renderShell } from "./shell";
@@ -19,6 +21,8 @@ const state: AppState = {
   palettes: null,
   colours: null,
   queries: { palettes: "", colours: "" },
+  facets: { palettes: [], colours: [] },
+  sorts: { palettes: "added", colours: "added" },
   build: {
     colours: [],
     name: "Untitled",
@@ -27,6 +31,8 @@ const state: AppState = {
     picking: false,
     error: null,
   },
+  recents: null,
+  picking: false,
 };
 
 const root = document.getElementById("app");
@@ -49,13 +55,27 @@ function body(): HTMLElement {
         onHarmony: (harmony) => void setHarmony(harmony),
       });
     case "pick":
-      return placeholder("Pick");
+      return renderPick(state.recents, "CTRL + SHIFT + P", state.picking, {
+        onPick: () => void pickFromScreen(),
+        onUseHex: (hex) => void goToColor(hex),
+        onSaveHex: (hex) => void mutate(() => api.saveColour(hex)),
+        onCopy: copy,
+      });
     case "palettes":
       return renderPalettes(
         state.palettes,
         state.queries.palettes,
         (hex) => void goToColor(hex),
         searchActions("palettes"),
+        {
+          onRenamePalette: (id, name) =>
+            void mutate(() => api.renamePalette(id, name)),
+          onDeletePalette: (id) => void mutate(() => api.deletePalette(id)),
+          facets: state.facets.palettes,
+          sort: state.sorts.palettes,
+          onToggleFacet: (id) => toggleFacet("palettes", id),
+          onSort: (id) => setSort("palettes", id),
+        },
       );
     case "colours":
       return renderColours(
@@ -63,6 +83,16 @@ function body(): HTMLElement {
         state.queries.colours,
         (hex) => void goToColor(hex),
         searchActions("colours"),
+        {
+          onRenameColour: (id, name) =>
+            void mutate(() => api.renameColour(id, name)),
+          onDeleteColour: (id) => void mutate(() => api.deleteColour(id)),
+          onCopy: copy,
+          facets: state.facets.colours,
+          sort: state.sorts.colours,
+          onToggleFacet: (id) => toggleFacet("colours", id),
+          onSort: (id) => setSort("colours", id),
+        },
       );
     case "build":
       return renderBuild(state.build, {
@@ -107,11 +137,38 @@ function render(): void {
         // user edits it, and re-reading on every tab switch would flicker.
         if (screen === "palettes" && state.palettes === null) void loadPalettes();
         if (screen === "colours" && state.colours === null) void loadColours();
+        if (screen === "pick" && state.recents === null) void loadRecents();
       },
       onMinimise: () => void getCurrentWindow().minimize(),
       onClose: () => void getCurrentWindow().close(),
     }),
   );
+}
+
+/** Pick from the Pick screen: the colour opens on Current. */
+async function pickFromScreen(): Promise<void> {
+  if (state.picking) return;
+  state.picking = true;
+  render();
+  try {
+    const hex = await api.pickColour();
+    state.recents = null;
+    if (hex) {
+      state.picking = false;
+      await goToColor(hex);
+      return;
+    }
+  } catch (e) {
+    console.error(String(e));
+  } finally {
+    state.picking = false;
+  }
+  await loadRecents();
+}
+
+async function loadRecents(): Promise<void> {
+  state.recents = await api.recentPicks().catch(() => []);
+  render();
 }
 
 /** Ask the picker for a colour and add it to the palette being built. */
@@ -149,14 +206,64 @@ async function savePalette(): Promise<void> {
   }
 }
 
+/**
+ * Run a library edit, then reload whichever screen is showing.
+ *
+ * The caches are dropped rather than patched: an edit is rare and a reload is
+ * a single query, whereas keeping a mirror of the library in the frontend in
+ * step with the database is a bug factory.
+ */
+async function mutate(action: () => Promise<unknown>): Promise<void> {
+  try {
+    await action();
+  } catch (e) {
+    tracing(String(e));
+    return;
+  }
+  state.palettes = null;
+  state.colours = null;
+  if (state.screen === "palettes") await loadPalettes();
+  if (state.screen === "colours") await loadColours();
+  if (state.screen === "pick") await loadRecents();
+}
+
+/** Surface a backend failure without a dialog. */
+function tracing(message: string): void {
+  console.error(message);
+}
+
 async function loadPalettes(): Promise<void> {
-  state.palettes = await api.palettes().catch(() => []);
+  state.palettes = await api
+    .palettes(state.facets.palettes, state.sorts.palettes)
+    .catch(() => []);
   render();
 }
 
 async function loadColours(): Promise<void> {
-  state.colours = await api.colours().catch(() => []);
+  state.colours = await api
+    .colours(state.facets.colours, state.sorts.colours)
+    .catch(() => []);
   render();
+}
+
+/** Toggle a facet chip and reload the screen it belongs to. */
+function toggleFacet(screen: "palettes" | "colours", id: string): void {
+  const current = state.facets[screen];
+  state.facets[screen] = current.includes(id)
+    ? current.filter((f) => f !== id)
+    : [...current, id];
+  void reload(screen);
+}
+
+function setSort(screen: "palettes" | "colours", id: string): void {
+  state.sorts[screen] = id;
+  void reload(screen);
+}
+
+/** Filtering and sorting happen in Rust, so a change means asking again. */
+async function reload(screen: "palettes" | "colours"): Promise<void> {
+  if (screen === "palettes") await loadPalettes();
+  else await loadColours();
 }
 
 function copy(value: string): void {
@@ -233,12 +340,14 @@ function installShortcuts(): void {
     render();
     if (state.screen === "palettes" && state.palettes === null) void loadPalettes();
     if (state.screen === "colours" && state.colours === null) void loadColours();
+    if (state.screen === "pick" && state.recents === null) void loadRecents();
   });
 }
 
 async function start(): Promise<void> {
   render();
   installShortcuts();
+  installMenuDismiss();
 
   // Open on the most recent pick, falling back to the prototype's own colour
   // so the window is never empty on a fresh install.

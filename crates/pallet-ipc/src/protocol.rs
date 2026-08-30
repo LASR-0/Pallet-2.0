@@ -40,6 +40,9 @@ pub enum Response {
         at: (i32, i32),
         /// The display profile it came from. `None` means sRGB.
         source_space: Option<String>,
+        /// The user asked for it to be kept in the library, not just copied.
+        #[serde(default)]
+        save: bool,
     },
     /// The user abandoned the pick.
     Cancelled,
@@ -81,6 +84,7 @@ mod tests {
                 hex: "#A5236E".into(),
                 at: (100, 200),
                 source_space: Some("display-p3".into()),
+                save: true,
             },
             Response::Error {
                 message: "no displays".into(),

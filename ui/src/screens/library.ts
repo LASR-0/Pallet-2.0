@@ -6,6 +6,8 @@
  */
 
 import { el, spacer } from "../dom";
+import { onContextMenu } from "../menu";
+import { renderFilters } from "./filters";
 import { completionFor, filterByQuery, renderSearchBar } from "./search";
 import type { ColourChip, PaletteCard } from "../state";
 
@@ -35,6 +37,55 @@ function libraryBar(label: string, count: number): HTMLElement {
   );
 }
 
+/**
+ * A name that becomes editable in place.
+ *
+ * Renaming inline rather than in a dialog keeps the swatch visible while you
+ * type, which is the whole point of naming a colour.
+ */
+function editableName(
+  value: string,
+  style: string,
+  onCommit: (name: string) => void,
+): HTMLElement {
+  const label = el("span", { style, text: value });
+
+  label.addEventListener("pallet:edit", () => {
+    const input = document.createElement("input");
+    input.type = "text";
+    input.value = value;
+    input.spellcheck = false;
+    input.setAttribute(
+      "style",
+      `${style};border:0;outline:none;background:transparent;padding:0;` +
+        "min-width:0;width:100%;user-select:text;-webkit-user-select:text",
+    );
+
+    const finish = (save: boolean) => {
+      const next = input.value.trim();
+      input.replaceWith(label);
+      if (save && next && next !== value) onCommit(next);
+    };
+    input.addEventListener("keydown", (event) => {
+      event.stopPropagation();
+      if (event.key === "Enter") finish(true);
+      if (event.key === "Escape") finish(false);
+    });
+    input.addEventListener("blur", () => finish(true));
+
+    label.replaceWith(input);
+    input.focus();
+    input.select();
+  });
+
+  return label;
+}
+
+/** Ask a name rendered by `editableName` to become editable. */
+function beginEdit(node: HTMLElement | null): void {
+  node?.dispatchEvent(new CustomEvent("pallet:edit"));
+}
+
 /** Shown when the library has nothing in it yet. */
 function empty(message: string): HTMLElement {
   return el("div", {
@@ -48,6 +99,14 @@ export function renderPalettes(
   query: string,
   onPickHex: (hex: string) => void,
   search: { onQuery: (value: string) => void },
+  actions: {
+    onRenamePalette: (id: string, name: string) => void;
+    onDeletePalette: (id: string) => void;
+    facets: string[];
+    sort: string;
+    onToggleFacet: (id: string) => void;
+    onSort: (id: string) => void;
+  },
 ): HTMLElement {
   if (palettes === null) return empty("Loading…");
 
@@ -65,8 +124,14 @@ export function renderPalettes(
     );
   };
 
-  const card = (p: PaletteCard) =>
-    el(
+  const card = (p: PaletteCard) => {
+    const name = editableName(
+      p.name,
+      `font:500 12px/1 ${SANS}`,
+      (next) => actions.onRenamePalette(p.id, next),
+    );
+
+    const node = el(
       "div",
       {
         class: "hv-card",
@@ -95,7 +160,7 @@ export function renderPalettes(
             style: `font:400 9px/1 ${MONO};color:var(--mute)`,
             text: p.num,
           }),
-          el("span", { style: `font:500 12px/1 ${SANS}`, text: p.name }),
+          name,
           spacer(),
           el("span", {
             style: `font:400 9px/1 ${MONO};letter-spacing:.08em;color:var(--mute)`,
@@ -105,10 +170,25 @@ export function renderPalettes(
       ],
     );
 
+    onContextMenu(node, () => [
+      { label: "Rename", onSelect: () => beginEdit(name) },
+      {
+        label: "Delete palette",
+        destructive: true,
+        onSelect: () => actions.onDeletePalette(p.id),
+      },
+    ]);
+    return node;
+  };
+
   paint(query);
 
   return el("div", { style: "display:flex;flex-direction:column;gap:12px" }, [
     libraryBar("LIBRARY : PALETTES", palettes.length),
+    renderFilters(actions.facets, actions.sort, {
+      onToggle: actions.onToggleFacet,
+      onSort: actions.onSort,
+    }),
     renderSearchBar(query, "Search palettes", {
       complete: (q) => completionFor(q, names),
       onQuery: (q) => {
@@ -125,14 +205,30 @@ export function renderColours(
   query: string,
   onPickHex: (hex: string) => void,
   search: { onQuery: (value: string) => void },
+  actions: {
+    onRenameColour: (id: string, name: string) => void;
+    onDeleteColour: (id: string) => void;
+    onCopy: (hex: string) => void;
+    facets: string[];
+    sort: string;
+    onToggleFacet: (id: string) => void;
+    onSort: (id: string) => void;
+  },
 ): HTMLElement {
   if (colours === null) return empty("Loading…");
 
   const names = colours.map((c) => c.name);
   const results = el("div", {});
 
-  const chip = (c: ColourChip) =>
-    el(
+  const chip = (c: ColourChip) => {
+    const name = editableName(
+      c.name,
+      `font:500 10.5px/1.2 ${SANS};text-align:center;max-width:100%;` +
+        "overflow:hidden;text-overflow:ellipsis;white-space:nowrap",
+      (next) => actions.onRenameColour(c.id, next),
+    );
+
+    const node = el(
       "div",
       {
         class: "hv-card",
@@ -148,18 +244,25 @@ export function renderColours(
             `width:46px;height:46px;border-radius:50%;background:${c.hex};` +
             "box-shadow:inset 0 0 0 1px rgba(0,0,0,.08)",
         }),
-        el("span", {
-          style:
-            `font:500 10.5px/1.2 ${SANS};text-align:center;max-width:100%;` +
-            "overflow:hidden;text-overflow:ellipsis;white-space:nowrap",
-          text: c.name,
-        }),
+        name,
         el("span", {
           style: `font:400 9px/1 ${MONO};color:var(--mute)`,
           text: c.hex,
         }),
       ],
     );
+
+    onContextMenu(node, () => [
+      { label: "Rename", onSelect: () => beginEdit(name) },
+      { label: "Copy hex", onSelect: () => actions.onCopy(c.hex) },
+      {
+        label: "Delete colour",
+        destructive: true,
+        onSelect: () => actions.onDeleteColour(c.id),
+      },
+    ]);
+    return node;
+  };
 
   const paint = (q: string) => {
     // Hex is searchable too: "#289" should find a colour by its value.
@@ -180,6 +283,10 @@ export function renderColours(
 
   return el("div", { style: "display:flex;flex-direction:column;gap:12px" }, [
     libraryBar("LIBRARY : COLOURS", colours.length),
+    renderFilters(actions.facets, actions.sort, {
+      onToggle: actions.onToggleFacet,
+      onSort: actions.onSort,
+    }),
     renderSearchBar(query, "Search colours", {
       complete: (q) => completionFor(q, names),
       onQuery: (q) => {

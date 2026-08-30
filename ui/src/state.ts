@@ -50,6 +50,12 @@ export interface ColourChip {
   hex: string;
 }
 
+/** One entry in the pick history. */
+export interface RecentPick {
+  id: string;
+  hex: string;
+}
+
 /** The palette being assembled on the Build screen. */
 export interface BuildState {
   colours: string[];
@@ -70,7 +76,13 @@ export interface AppState {
   colours: ColourChip[] | null;
   /** Search text, kept per screen so switching tabs does not lose it. */
   queries: Record<"palettes" | "colours", string>;
+  /** Selected facet chips, per screen. */
+  facets: Record<"palettes" | "colours", string[]>;
+  /** Sort order, per screen. */
+  sorts: Record<"palettes" | "colours", string>;
   build: BuildState;
+  recents: RecentPick[] | null;
+  picking: boolean;
 }
 
 export const TABS: [Screen, string][] = [

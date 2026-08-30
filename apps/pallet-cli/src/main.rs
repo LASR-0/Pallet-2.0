@@ -204,6 +204,11 @@ fn main() -> Result<()> {
         Command::Status => {
             match ping() {
                 Some(version) => println!("picker running (version {version})"),
+                // A live picker mid-overlay looks the same as none from here;
+                // say so rather than claiming it is not running.
+                None if transport::socket_path().exists() => {
+                    println!("picker not responding (busy with a pick, or stale socket)");
+                }
                 None => println!("picker not running"),
             }
             println!("socket  {}", transport::socket_path().display());
@@ -245,7 +250,10 @@ fn main() -> Result<()> {
 
             match outcome {
                 Response::Picked {
-                    hex, source_space, ..
+                    hex,
+                    source_space,
+                    save,
+                    ..
                 } => {
                     println!("{hex}");
 
@@ -260,6 +268,23 @@ fn main() -> Result<()> {
                     paths.ensure_dirs()?;
                     let store = Store::open(&paths.database_file())?;
                     store.record_pick(color, source_space.as_deref(), None)?;
+
+                    // `S` in the loupe means keep it, not just copy it. The
+                    // name is a suggestion the user is expected to change.
+                    if save {
+                        let name =
+                            pallet_color::naming::nearest(color).map(|m| m.named.name.to_string());
+                        let mut colour = pallet_store::NewColour::new(color);
+                        colour.name = name.clone();
+                        colour.source_space = source_space.clone();
+                        store.add_colour(&colour)?;
+                        if !quiet {
+                            eprintln!(
+                                "  saved to the library as {}",
+                                name.as_deref().unwrap_or("an unnamed colour")
+                            );
+                        }
+                    }
 
                     if !quiet
                         && config.color.name_new_colors
@@ -442,8 +467,17 @@ fn ask_picker(options: &pallet_ipc::PickOptions) -> Option<Response> {
 }
 
 /// Ask the picker for its version, to see whether it is alive.
+///
+/// Unlike a pick, this has a read timeout. The picker serves one request at a
+/// time, so while an overlay is up it accepts the connection but does not read
+/// it; without a deadline `pallet status` would block until the user finished
+/// picking, which is not what "status" should ever do.
 fn ping() -> Option<String> {
-    let mut stream = std::os::unix::net::UnixStream::connect(transport::socket_path()).ok()?;
+    let stream = std::os::unix::net::UnixStream::connect(transport::socket_path()).ok()?;
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_millis(500)))
+        .ok()?;
+    let mut stream = stream;
     write_message(&mut stream, &Request::Ping).ok()?;
     match read_message(&mut stream).ok()? {
         Response::Pong { version } => Some(version),
@@ -479,10 +513,12 @@ fn pick_in_process(options: &pallet_ipc::PickOptions) -> Result<Response> {
             color,
             at,
             source_space,
+            save,
         } => Response::Picked {
             hex: color.to_hex(),
             at,
             source_space,
+            save,
         },
         pallet_overlay::Outcome::Cancelled => Response::Cancelled,
     })

@@ -126,10 +126,12 @@ fn serve_pick(
             color,
             at,
             source_space,
+            save,
         }) => Response::Picked {
             hex: color.to_hex(),
             at,
             source_space,
+            save,
         },
         Ok(pallet_overlay::Outcome::Cancelled) => Response::Cancelled,
         Err(e) => Response::Error {
