@@ -12,11 +12,9 @@ import Fuse from "fuse.js";
 
 import { el, svg } from "../dom";
 
+const MONO = "var(--mono),monospace";
 const SANS = "var(--font),sans-serif";
 const FIELD_FONT = `400 11.5px/1 ${SANS}`;
-const PAD_LEFT = 14;
-/** Icon (13px) + the shell's 8px gaps + the colon glyph. */
-const FIELD_OFFSET = PAD_LEFT + 13 + 8 + 4 + 8;
 
 /** A magnifier, sized to sit beside 11.5px text. */
 function searchIcon(): SVGElement {
@@ -84,7 +82,12 @@ export interface SearchActions {
 }
 
 /**
- * A search field that updates itself.
+ * The library's heading and its search field, as one bar.
+ *
+ * They were two stacked bars saying much the same thing. Merged, the heading
+ * names the collection, the field searches it, and the count on the right
+ * belongs to both — one row instead of two, in a window where vertical space
+ * is the scarce thing.
  *
  * The input element is created once and never replaced. Re-rendering the whole
  * screen on each keystroke — the pattern used everywhere else in this app —
@@ -92,35 +95,35 @@ export interface SearchActions {
  * occasionally a character. A text field is the one place that has to hold
  * still, so it owns its own DOM and only tells the caller the query changed.
  */
-export function renderSearchBar(
+export function renderLibraryBar(
+  heading: string,
+  count: number,
   query: string,
   placeholder: string,
   actions: SearchActions,
 ): HTMLElement {
-  const completion = actions.complete(query);
   const shell = el("div", {
     style:
-      "position:relative;display:flex;align-items:center;gap:8px;height:34px;" +
-      `padding:0 12px 0 ${PAD_LEFT}px;border-radius:999px;` +
+      "display:flex;align-items:center;gap:8px;height:34px;" +
+      // Fully rounded, so the bar reads as a field rather than as a panel
+      // with something typed into it.
+      "padding:0 14px;border-radius:999px;" +
       "border:1px solid var(--line);background:var(--panel)",
   });
 
-  // The ghost sits under the input: the typed part is transparent so only the
-  // suggested remainder shows through.
+  // The ghost sits under the input, inside a wrapper that holds only those
+  // two. Positioning it against the bar instead would mean re-deriving its
+  // offset from the heading's width every time the heading changed.
+  const field = el("div", {
+    style:
+      "position:relative;flex:1;min-width:0;display:flex;align-items:center",
+  });
   const ghost = el("div", {
     style:
-      `position:absolute;left:${FIELD_OFFSET}px;top:0;height:100%;display:flex;` +
-      `align-items:center;font:${FIELD_FONT};pointer-events:none;white-space:pre`,
+      "position:absolute;left:0;top:0;width:100%;height:100%;display:flex;" +
+      `align-items:center;font:${FIELD_FONT};pointer-events:none;` +
+      "white-space:pre;overflow:hidden",
   });
-  if (completion) {
-    ghost.append(
-      el("span", { style: "color:transparent", text: query }),
-      el("span", {
-        style: "color:var(--mute)",
-        text: completion.slice(query.length),
-      }),
-    );
-  }
 
   const input = document.createElement("input");
   input.type = "text";
@@ -135,6 +138,7 @@ export function renderSearchBar(
       // is the one place it must work.
       "user-select:text;-webkit-user-select:text",
   );
+
   const paintGhost = (value: string) => {
     const suggestion = actions.complete(value);
     ghost.replaceChildren();
@@ -148,6 +152,7 @@ export function renderSearchBar(
       );
     }
   };
+  paintGhost(query);
 
   input.addEventListener("input", () => {
     paintGhost(input.value);
@@ -180,9 +185,18 @@ export function renderSearchBar(
     event.stopPropagation();
   });
 
-  // Icon, colon, then the field — echoing the "LIBRARY : COLOURS" heading
-  // directly above, so the two bars read as a pair.
+  field.append(ghost, input);
+
   shell.append(
+    el("span", {
+      // Nudged down a pixel. All-caps text has no descenders, so centring its
+      // box puts the letters above the centre line that the icon and the
+      // mixed-case field share.
+      style:
+        `font:400 10px/1 ${MONO};letter-spacing:.14em;color:var(--mute);` +
+        "flex:none;position:relative;top:1px",
+      text: heading,
+    }),
     el("div", { style: "color:var(--mute);display:flex;flex:none" }, [
       searchIcon(),
     ]),
@@ -190,8 +204,11 @@ export function renderSearchBar(
       style: `font:400 11.5px/1 ${SANS};color:var(--mute);flex:none`,
       text: ":",
     }),
-    ghost,
-    input,
+    field,
+    el("span", {
+      style: `font:400 10px/1 ${MONO};color:var(--mute);flex:none`,
+      text: String(count),
+    }),
   );
   return shell;
 }

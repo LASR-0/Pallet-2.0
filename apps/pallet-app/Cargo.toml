@@ -21,6 +21,7 @@ pallet-core.workspace = true
 pallet-store.workspace = true
 pallet-ipc.workspace = true
 pallet-export.workspace = true
+pallet-hotkey.workspace = true
 tauri = { version = "2", features = ["tray-icon"] }
 serde.workspace = true
 serde_json.workspace = true

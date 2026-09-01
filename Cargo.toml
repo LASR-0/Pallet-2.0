@@ -57,6 +57,10 @@ time = { version = "0.3.55", features = ["formatting", "parsing", "serde"] }
 uuid = { version = "1.26.0", features = ["v4", "serde"] }
 
 # --- capture + overlay (M3/M4) ---
+# Glyph rasterisation for the loupe's readout. The overlay is wgpu, which has
+# no text of its own, and the webview's woff2 fonts are unreadable to a Rust
+# rasteriser.
+fontdue = "0.9.4"
 wgpu = "30.0.1"
 winit = "0.30.13"
 raw-window-handle = "0.6.2"

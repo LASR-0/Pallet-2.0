@@ -10,6 +10,12 @@
 type Attrs = {
   style?: string;
   class?: string;
+  /**
+   * Tooltip text.
+   *
+   * Set as `data-tip`, not `title`: a native title is drawn by the platform,
+   * which on Linux means the GTK theme rather than this app's.
+   */
   title?: string;
   onClick?: () => void;
   text?: string;
@@ -23,7 +29,7 @@ export function el(
   const node = document.createElement(tag);
   if (attrs.style) node.setAttribute("style", attrs.style);
   if (attrs.class) node.className = attrs.class;
-  if (attrs.title) node.title = attrs.title;
+  if (attrs.title) node.dataset.tip = attrs.title;
   if (attrs.text !== undefined) node.textContent = attrs.text;
   if (attrs.onClick) {
     const handler = attrs.onClick;

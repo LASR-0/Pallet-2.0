@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics>
+<meta name="design_doc_mode" content="canvas">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+body { margin: 0; background: #EFEDE8; font-family: 'Instrument Sans', system-ui, sans-serif }
+a { color: #C0463D; text-decoration: none }
+a:hover { color: #8E2E28 }
+.dv-turn { padding: 44px 48px 36px; border-bottom: 1px solid rgba(0,0,0,.09); scroll-margin-top: 16px }
+.dv-thd { display: flex; align-items: baseline; gap: 10px; margin: 0 0 8px }
+.dv-tid { font: 600 10px ui-monospace, 'IBM Plex Mono', monospace; padding: 3px 7px; background: #1E1C1A; color: #fff; border-radius: 4px; text-decoration: none }
+.dv-tname { font: 600 13px/1.2 'Instrument Sans', sans-serif; color: #1E1C1A }
+.dv-intro { max-width: 720px; margin: 0 0 26px; font: 400 12.5px/1.65 'Instrument Sans', sans-serif; color: rgba(30,28,26,.62) }
+.dv-opts { display: flex; flex-wrap: wrap; gap: 34px; align-items: flex-start }
+.dv-opt { flex: none; display: flex; flex-direction: column; gap: 10px; scroll-margin-top: 16px }
+.dv-oid { font: 600 10.5px ui-monospace, 'IBM Plex Mono', monospace; padding: 3px 7px; background: rgba(0,0,0,.08); color: #1E1C1A; border-radius: 5px; text-decoration: none }
+.dv-olabel { display: flex; align-items: baseline; gap: 8px; font: 400 11px/1.3 'Instrument Sans', sans-serif; color: rgba(30,28,26,.55) }
+.dv-note { max-width: 440px; font: 400 11px/1.55 'Instrument Sans', sans-serif; color: rgba(30,28,26,.45) }
+.dv-opt:target .dv-oid { background: #C0463D; color: #fff }
+.dv-next { margin: 26px 0 0; font: 12px/1.6 'Instrument Sans', sans-serif; color: rgba(30,28,26,.5) }
+.dv-kicker { font: 400 9.5px/1 'IBM Plex Mono', monospace; letter-spacing: .16em; color: rgba(30,28,26,.4); text-transform: uppercase }
+</style>
+</helmet>
+
+<section class="dv-turn" id="t4">
+  <div class="dv-thd"><a class="dv-tid" href="#t4">4</a><span class="dv-tname">Softer — studio, not gallery</span></div>
+  <p class="dv-intro">Turn 3 read as deco because of the hard ink borders, square corners and formal serifs. These drop all three: no keylines at all, generous radii, humanist and rounded type, soft mono for the figures, and shadow doing the work that borders were doing. Warm rather than archival, so it sits as comfortably next to a painting app as a code editor. Live as before.</p>
+  <div class="dv-opts">
+    <div class="dv-opt" id="4a">
+      <div class="dv-olabel"><a class="dv-oid" href="#4a">4a</a>Sketchbook — warm paper, terracotta</div>
+      <div style="display:flex;width:440px;height:640px">
+        <dc-import name="Pallet Window" theme="sketchbook" screen="current" style="width:100%;height:100%" hint-size="440px,640px"></dc-import>
+      </div>
+      <p class="dv-note">Karla with DM Mono figures. Borders replaced by tone: panels are a shade lighter than the ground, so structure is felt rather than drawn.</p>
+    </div>
+    <div class="dv-opt" id="4b">
+      <div class="dv-olabel"><a class="dv-oid" href="#4b">4b</a>Studio — soft dark, sage</div>
+      <div style="display:flex;width:440px;height:640px">
+        <dc-import name="Pallet Window" theme="studio" screen="palettes" style="width:100%;height:100%" hint-size="440px,640px"></dc-import>
+      </div>
+      <p class="dv-note">Warm charcoal instead of black, Sora, sage accent. The neutral ground is honest for judging colour without the clinical feel of a pure dark UI.</p>
+    </div>
+    <div class="dv-opt" id="4c">
+      <div class="dv-olabel"><a class="dv-oid" href="#4c">4c</a>Wash — tinted white, muted violet</div>
+      <div style="display:flex;width:440px;height:640px">
+        <dc-import name="Pallet Window" theme="wash" screen="colours" style="width:100%;height:100%" hint-size="440px,640px"></dc-import>
+      </div>
+      <p class="dv-note">Softest of the three: panels barely tinted off the ground, largest radii, Manrope. Almost no edges anywhere.</p>
+    </div>
+  </div>
+  <p class="dv-next">Try next: "take <a class="dv-oid" href="#4a">4a</a> through every screen and pick mode" · "add a paper grain to <a class="dv-oid" href="#4a">4a</a>" · "soften pick mode's dark chips to match"</p>
+</section>
+
+<section class="dv-turn" id="t3">
+  <div class="dv-thd"><a class="dv-tid" href="#t3">3</a><span class="dv-tname">Art-book stylisation</span></div>
+  <p class="dv-intro">Same structure, treated as a printed colour specimen. Serif type throughout, square corners, hairline rules and a heavy ink border instead of a soft shadow, so the window reads as a plate rather than a chrome panel. Each one is mounted in a mat board with a printed caption; the numbers stay monospaced, which in this context reads as an archival specimen label. Still live — tabs and swatches work.</p>
+  <div class="dv-opts">
+    <div class="dv-opt" id="3a">
+      <div class="dv-olabel"><a class="dv-oid" href="#3a">3a</a>Atlas — laid paper, oxide red</div>
+      <div style="display:flex;flex-direction:column;gap:0;padding:26px 26px 0;background:#E4DCC9;border:1px solid rgba(36,31,26,.3)">
+        <div style="display:flex;width:440px;height:640px;outline:1px solid rgba(36,31,26,.28);outline-offset:7px">
+          <dc-import name="Pallet Window" theme="atlas" screen="current" style="width:100%;height:100%" hint-size="440px,640px"></dc-import>
+        </div>
+        <div style="display:flex;align-items:baseline;gap:9px;padding:26px 2px 22px;border-top:1px solid rgba(36,31,26,.22);margin-top:26px">
+          <span style="font:400 10px/1 'IBM Plex Mono',monospace;letter-spacing:.14em;color:rgba(36,31,26,.55)">PL. I</span>
+          <span style="font:italic 400 13px/1.3 Newsreader,serif;color:rgba(36,31,26,.8)">Current colour, with complementary and shade ramp</span>
+        </div>
+      </div>
+      <p class="dv-note">Newsreader for everything but the figures. The title bar becomes a printed header band; the coral mark cools into oxide red so it sits on aged paper.</p>
+    </div>
+    <div class="dv-opt" id="3b">
+      <div class="dv-olabel"><a class="dv-oid" href="#3b">3b</a>Bistre — dark plates, gilt rule</div>
+      <div style="display:flex;flex-direction:column;gap:0;padding:26px 26px 0;background:#171410;border:1px solid rgba(240,231,214,.18)">
+        <div style="display:flex;width:440px;height:640px;outline:1px solid rgba(192,138,46,.5);outline-offset:7px">
+          <dc-import name="Pallet Window" theme="bistre" screen="palettes" style="width:100%;height:100%" hint-size="440px,640px"></dc-import>
+        </div>
+        <div style="display:flex;align-items:baseline;gap:9px;padding:26px 2px 22px;border-top:1px solid rgba(192,138,46,.35);margin-top:26px">
+          <span style="font:400 10px/1 'IBM Plex Mono',monospace;letter-spacing:.14em;color:rgba(192,138,46,.8)">PL. II</span>
+          <span style="font:italic 400 13px/1.3 Spectral,serif;color:rgba(240,231,214,.72)">The palette library, four of twelve</span>
+        </div>
+      </div>
+      <p class="dv-note">Spectral on bistre ground with a gilt keyline. Palettes sit like mounted specimens, and every sample is judged against dark neutral rather than paper.</p>
+    </div>
+    <div class="dv-opt" id="3c">
+      <div class="dv-olabel"><a class="dv-oid" href="#3c">3c</a>Gouache — cool board, prussian ink</div>
+      <div style="display:flex;flex-direction:column;gap:0;padding:26px 26px 0;background:#D8D5C9;border:1px solid rgba(31,42,51,.25)">
+        <div style="display:flex;width:440px;height:640px;outline:1px solid rgba(31,42,51,.3);outline-offset:7px">
+          <dc-import name="Pallet Window" theme="gouache" screen="colours" style="width:100%;height:100%" hint-size="440px,640px"></dc-import>
+        </div>
+        <div style="display:flex;align-items:baseline;gap:9px;padding:26px 2px 22px;border-top:1px solid rgba(31,42,51,.2);margin-top:26px">
+          <span style="font:400 10px/1 'IBM Plex Mono',monospace;letter-spacing:.14em;color:rgba(31,42,51,.6)">PL. III</span>
+          <span style="font:italic 400 13px/1.3 'EB Garamond',serif;color:rgba(31,42,51,.78)">Named colours, sampled and catalogued</span>
+        </div>
+      </div>
+      <p class="dv-note">EB Garamond, a cooler board and prussian accent. The circular chips in the colour library already read as pigment dabs; this treatment leans into that.</p>
+    </div>
+  </div>
+  <p class="dv-next">Try next: "put the plate caption inside the window" · "give <a class="dv-oid" href="#3a">3a</a> letterpress texture and deckled edges" · "apply <a class="dv-oid" href="#3a">3a</a> to pick mode too"</p>
+</section>
+
+<section class="dv-turn" id="t2">
+  <div class="dv-thd"><a class="dv-tid" href="#t2">2</a><span class="dv-tname">Pick mode — the frozen screen</span></div>
+  <p class="dv-intro">The cursor keeps the v1.0 feel: crosshair plus a round pixel loupe. What is new is that the loupe carries its own readout, so your eye never leaves the sample point, and a tray at the bottom holds a multi-pick run of five. Move your mouse over the card — the loupe samples live. The desktop behind it is a placeholder; drop in a real screenshot when you have one.</p>
+  <div class="dv-opts">
+    <div class="dv-opt" id="2a">
+      <div class="dv-olabel"><a class="dv-oid" href="#2a">2a</a>Loupe with attached readout · multi-pick tray</div>
+      <div style="width:900px;height:506px;border-radius:10px;overflow:hidden;border:1px solid rgba(0,0,0,.12);box-shadow:0 20px 50px -22px rgba(0,0,0,.45)">
+        <dc-import name="Pallet Pick" style="width:100%;height:100%" hint-size="900px,506px"></dc-import>
+      </div>
+      <p class="dv-note">11×11 pixel grid at 16×, centre cell ringed. Hex and RGB ride under the loupe on a dark chip so they read against any wallpaper. Crosshair uses difference blending rather than a fixed colour.</p>
+    </div>
+  </div>
+  <p class="dv-next">Try next: "make the loupe square with a corner readout" · "show the shift-to-average state" · "more directions for the cursor"</p>
+</section>
+
+<section class="dv-turn" id="t1">
+  <div class="dv-thd"><a class="dv-tid" href="#t1">1</a><span class="dv-tname">Three aesthetics for the compact window</span></div>
+  <p class="dv-intro">Same footprint as v1.0 (440 × 640) and the same job order — Pick, Current, Palettes, Colours, Build, Settings — moved from the greyed-out menu bar into a single tab row. All three are live: click the tabs, click any swatch to make it the current colour, switch harmony sets. The differences are surface, type and how loud the colour is allowed to be.</p>
+  <div class="dv-opts">
+    <div class="dv-opt" id="1a">
+      <div class="dv-olabel"><a class="dv-oid" href="#1a">1a</a>Paper — faithful evolution</div>
+      <div style="width:440px;height:640px">
+        <dc-import name="Pallet Window" theme="paper" screen="current" style="width:100%;height:100%" hint-size="440px,640px"></dc-import>
+      </div>
+      <p class="dv-note">Keeps the cream ground and coral mark from v1.0. Instrument Sans for labels, IBM Plex Mono for every number, so hex values are always monospaced and column-aligned.</p>
+    </div>
+    <div class="dv-opt" id="1b">
+      <div class="dv-olabel"><a class="dv-oid" href="#1b">1b</a>Graphite — colour does the talking</div>
+      <div style="width:440px;height:640px">
+        <dc-import name="Pallet Window" theme="graphite" screen="palettes" style="width:100%;height:100%" hint-size="440px,640px"></dc-import>
+      </div>
+      <p class="dv-note">Near-black shell so samples are judged against neutral, not against cream. Space Grotesk, wider radii, blush accent lifted from the Winter Sunset palette.</p>
+    </div>
+    <div class="dv-opt" id="1c">
+      <div class="dv-olabel"><a class="dv-oid" href="#1c">1c</a>Glass — floating utility</div>
+      <div style="width:440px;height:640px">
+        <dc-import name="Pallet Window" theme="glass" screen="colours" style="width:100%;height:100%" hint-size="440px,640px"></dc-import>
+      </div>
+      <p class="dv-note">Translucent panels, no hard window edge, DM Sans. Reads as an overlay that lives on top of your work rather than an application window.</p>
+    </div>
+  </div>
+  <p class="dv-next">Try next: "take <a class="dv-oid" href="#1a">1a</a> forward and show every screen side by side" · "try <a class="dv-oid" href="#1b">1b</a> at half the width" · "round 3: layout and density options"</p>
+</section>
+</x-dc>
+</body>
+</html>

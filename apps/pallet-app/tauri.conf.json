@@ -5,8 +5,8 @@
   "identifier": "dev.pallet.desktop",
   "build": {
     "frontendDist": "../../ui/dist",
-    "beforeDevCommand": "pnpm --dir ../ui dev",
-    "beforeBuildCommand": "pnpm --dir ../ui build",
+    "beforeDevCommand": "cargo build -p pallet-picker && pnpm --dir ../ui dev",
+    "beforeBuildCommand": "cargo build --release -p pallet-picker && pnpm --dir ../ui build",
     "devUrl": "http://127.0.0.1:5173"
   },
   "app": {
@@ -16,12 +16,13 @@
         "width": 440,
         "height": 640,
         "resizable": true,
-        "minWidth": 380,
-        "minHeight": 480,
+        "minWidth": 440,
+        "minHeight": 420,
         "decorations": false,
         "transparent": true,
         "shadow": false,
-        "center": true
+        "center": true,
+        "maxWidth": 440
       }
     ],
     "security": {

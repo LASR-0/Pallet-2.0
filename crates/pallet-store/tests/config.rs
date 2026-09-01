@@ -138,3 +138,24 @@ fn saves_and_reloads_from_disk() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn key_bindings_default_to_the_documented_set() {
+    let k = Config::default().keys;
+    assert_eq!(k.pick, "CTRL+SHIFT+P");
+    assert_eq!(k.theme, "T");
+    assert_eq!(k.search, "/");
+    assert_eq!(k.save_palette, "CTRL+S");
+    assert_eq!(k.loupe_commit, "Return");
+    assert_eq!(k.loupe_save, "S");
+    assert_eq!(k.loupe_cancel, "Escape");
+}
+
+#[test]
+fn key_bindings_round_trip_and_survive_a_partial_file() {
+    let loaded = Config::from_toml("[keys]\npick = \"CTRL+ALT+K\"\n");
+    assert_eq!(loaded.config.keys.pick, "CTRL+ALT+K");
+    // Everything unmentioned keeps its default rather than emptying.
+    assert_eq!(loaded.config.keys.theme, "T");
+    assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+}

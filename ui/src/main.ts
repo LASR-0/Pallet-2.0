@@ -5,13 +5,15 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import * as api from "./api";
 import { renderCurrent } from "./screens/current";
 import { installMenuDismiss } from "./menu";
+import { installTooltips } from "./tooltip";
 import { renderBuild } from "./screens/build";
 import { renderPick } from "./screens/pick";
 import { renderSettings } from "./screens/settings";
 import { renderColours, renderPalettes } from "./screens/library";
 import { focusSearch } from "./screens/search";
+import { comboFromEvent, matches } from "./keys";
 import { renderShell } from "./shell";
-import { TABS, type AppState, type Harmony, type Screen, type Theme } from "./state";
+import { TABS, type AppState, type Harmony, type Screen } from "./state";
 
 const state: AppState = {
   screen: "current",
@@ -25,7 +27,9 @@ const state: AppState = {
   sorts: { palettes: "added", colours: "added" },
   build: {
     colours: [],
-    name: "Untitled",
+    name: "",
+    suggested: "Untitled",
+    needsName: false,
     min: 3,
     capacity: 25,
     picking: false,
@@ -36,6 +40,9 @@ const state: AppState = {
   recents: null,
   picking: false,
   settings: null,
+  bindings: null,
+  capturing: null,
+  naming: null,
 };
 
 const root = document.getElementById("app");
@@ -48,6 +55,7 @@ function body(): HTMLElement {
         onCopy: copy,
         onPickHex: (hex) => void setColor(hex),
         onHarmony: (harmony) => void setHarmony(harmony),
+        onKeep: (hex) => void keepColour(hex),
       });
     case "pick":
       return renderPick(state.recents, "CTRL + SHIFT + P", state.picking, {
@@ -69,6 +77,7 @@ function body(): HTMLElement {
           facets: state.facets.palettes,
           sort: state.sorts.palettes,
           onToggleFacet: (id) => toggleFacet("palettes", id),
+          onClearFacets: () => clearFacets("palettes"),
           onSort: (id) => setSort("palettes", id),
         },
       );
@@ -86,7 +95,13 @@ function body(): HTMLElement {
           facets: state.facets.colours,
           sort: state.sorts.colours,
           onToggleFacet: (id) => toggleFacet("colours", id),
+          onClearFacets: () => clearFacets("colours"),
           onSort: (id) => setSort("colours", id),
+          naming: state.naming,
+          onNamed: () => {
+            state.naming = null;
+            render();
+          },
         },
       );
     case "build":
@@ -100,11 +115,21 @@ function body(): HTMLElement {
         },
         onRename: (name) => {
           state.build.name = name;
+          // Typing answers the prompt, so the field stops asking.
+          if (name.trim()) state.build.needsName = false;
         },
+        onSubmitName: () => void savePalette(),
         onExport: (format) => void exportPalette(format),
       });
     case "settings":
-      return renderSettings(state.settings, (key) => void cycleSetting(key));
+      return renderSettings(state.settings, state.bindings, state.capturing, {
+        onCycle: (key) => void cycleSetting(key),
+        onCapture: (key) => {
+          // Arm capture; the next keypress becomes the binding.
+          state.capturing = state.capturing === key ? null : key;
+          render();
+        },
+      });
   }
 }
 
@@ -148,7 +173,7 @@ async function pickFromScreen(): Promise<void> {
   state.picking = true;
   render();
   try {
-    const hex = await api.pickColour();
+    const [hex] = await api.pickColour();
     state.recents = null;
     if (hex) {
       state.picking = false;
@@ -163,9 +188,41 @@ async function pickFromScreen(): Promise<void> {
   await loadRecents();
 }
 
+/**
+ * Keep the Current colour, then hand straight over to naming it.
+ *
+ * No dialog: the colour is already saved under its suggested name by the time
+ * the Colours screen appears, and the open field is an invitation to change it
+ * rather than a form standing between the user and their library.
+ */
+async function keepColour(hex: string): Promise<void> {
+  let id: string;
+  try {
+    id = await api.saveColour(hex);
+  } catch (e) {
+    console.error(String(e));
+    return;
+  }
+
+  state.colours = null;
+  state.palettes = null;
+  state.screen = "colours";
+  // Clear any filter or search that would hide the colour just added.
+  state.queries.colours = "";
+  state.facets.colours = [];
+  state.naming = id;
+  await loadColours();
+}
+
 async function loadSettings(): Promise<void> {
   state.settings = await api.settings().catch(() => []);
+  state.bindings = await api.bindings().catch(() => []);
   render();
+}
+
+/** Read the bindings without re-rendering, for the shortcut handler. */
+function binding(key: string): string {
+  return state.bindings?.find((b) => b.key === key)?.combo ?? "";
 }
 
 /**
@@ -196,7 +253,14 @@ async function loadRecents(): Promise<void> {
   render();
 }
 
-/** Ask the picker for a colour and add it to the palette being built. */
+/**
+ * Gather the rest of the palette in one pass.
+ *
+ * One press freezes the screen once and collects colours until the HUD's tray
+ * fills, or until the user finishes early — whatever they took by then is
+ * added. Re-freezing the screen for each colour made it impossible to choose
+ * colours that sit well together, which is the whole point of the screen.
+ */
 async function pickNext(): Promise<void> {
   if (state.build.picking) return;
   state.build.picking = true;
@@ -204,8 +268,13 @@ async function pickNext(): Promise<void> {
   render();
 
   try {
-    const hex = await api.pickColour();
-    if (hex) state.build.colours.push(hex);
+    const taken = await api.pickColour([...state.build.colours]);
+    state.build.colours.push(
+      ...taken.slice(0, state.build.capacity - state.build.colours.length),
+    );
+    // Those colours are now in the pick history too, so the cached list is
+    // stale even though the Build screen is what the user is looking at.
+    if (taken.length > 0) state.recents = null;
   } catch (e) {
     state.build.error = String(e);
   } finally {
@@ -218,7 +287,7 @@ async function pickNext(): Promise<void> {
 async function exportPalette(format: string): Promise<void> {
   try {
     state.build.exported = await api.exportPalette(
-      state.build.name,
+      paletteName(),
       state.build.colours,
       format,
     );
@@ -230,15 +299,37 @@ async function exportPalette(format: string): Promise<void> {
   render();
 }
 
+/** What the palette would be saved as right now. */
+function paletteName(): string {
+  return state.build.name.trim() || state.build.suggested;
+}
+
+/**
+ * Save the palette, asking for a name first if it has never been given one.
+ *
+ * The name field is easy to miss, and a palette saved as "Untitled 6" has to be
+ * renamed in the library afterwards. Saving an unnamed palette therefore puts
+ * the cursor in the field instead, with the suggestion showing through: type a
+ * name, or press Enter to accept the one already there.
+ */
 async function savePalette(): Promise<void> {
+  if (!state.build.name.trim() && !state.build.needsName) {
+    state.build.needsName = true;
+    state.build.error = null;
+    render();
+    return;
+  }
+
   try {
-    await api.savePalette(state.build.name, state.build.colours);
+    await api.savePalette(paletteName(), state.build.colours);
     state.build.colours = [];
     state.build.error = null;
     state.build.exported = null;
+    state.build.name = "";
+    state.build.needsName = false;
     // The library changed, so drop the cache and pick up a fresh default name.
     state.palettes = null;
-    state.build.name = await api.nextPaletteName().catch(() => "Untitled");
+    state.build.suggested = await api.nextPaletteName().catch(() => "Untitled");
     state.screen = "palettes";
     render();
     void loadPalettes();
@@ -297,6 +388,13 @@ function toggleFacet(screen: "palettes" | "colours", id: string): void {
   void reload(screen);
 }
 
+/** Drop every tag filter at once, for the Clear pill. */
+function clearFacets(screen: "palettes" | "colours"): void {
+  if (state.facets[screen].length === 0) return;
+  state.facets[screen] = [];
+  void reload(screen);
+}
+
 function setSort(screen: "palettes" | "colours", id: string): void {
   state.sorts[screen] = id;
   void reload(screen);
@@ -337,29 +435,34 @@ async function setHarmony(harmony: Harmony): Promise<void> {
  */
 function installShortcuts(): void {
   window.addEventListener("keydown", (event) => {
-    // Ctrl+S saves the palette being built, the one shortcut that earns a
-    // modifier because it commits something.
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
-      if (state.screen === "build") {
-        event.preventDefault();
-        void savePalette();
+    // Capturing a new binding swallows everything until a real key arrives.
+    if (state.capturing) {
+      event.preventDefault();
+      if (event.key === "Escape") {
+        state.capturing = null;
+        render();
+        return;
       }
-      return;
-    }
-    if (event.metaKey || event.ctrlKey || event.altKey) return;
-
-    if (event.key.toLowerCase() === "t") {
-      const next: Theme = state.theme === "sketchbook" ? "studio" : "sketchbook";
-      state.theme = next;
-      render();
+      const combo = comboFromEvent(event);
+      if (combo) void applyBinding(state.capturing, combo);
       return;
     }
 
-    // "/" focuses search, the convention in tools that are keyboard-first.
-    // Autofocusing on tab entry would be more convenient but would swallow the
-    // digit shortcuts below the moment either library screen opened.
+    // Bindings come from config, so remapping takes effect immediately.
+    if (matches(event, binding("pick"))) {
+      event.preventDefault();
+      void (state.screen === "build" ? pickNext() : pickFromScreen());
+      return;
+    }
+
+    if (matches(event, binding("theme"))) {
+      event.preventDefault();
+      void cycleSetting("theme");
+      return;
+    }
+
     if (
-      event.key === "/" &&
+      matches(event, binding("search")) &&
       (state.screen === "palettes" || state.screen === "colours")
     ) {
       event.preventDefault();
@@ -367,14 +470,25 @@ function installShortcuts(): void {
       return;
     }
 
-    // Enter is the Build screen's primary action, so the whole gather-a-palette
-    // flow works without the mouse.
-    if (event.key === "Enter" && state.screen === "build") {
+    if (matches(event, binding("save_palette")) && state.screen === "build") {
       event.preventDefault();
-      void pickNext();
+      void savePalette();
       return;
     }
 
+    if (
+      matches(event, binding("save_colour")) &&
+      state.screen === "current" &&
+      state.detail
+    ) {
+      event.preventDefault();
+      void keepColour(state.detail.hex);
+      return;
+    }
+
+    // Tab digits stay fixed: they are positional rather than a command, and
+    // binding six of them would fill the settings list for little gain.
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
     const index = Number(event.key) - 1;
     const tab = TABS[index];
     if (!tab) return;
@@ -387,10 +501,31 @@ function installShortcuts(): void {
   });
 }
 
+/** Store a captured binding and refresh what is on screen. */
+async function applyBinding(key: string, combo: string): Promise<void> {
+  const target = key;
+  state.capturing = null;
+  try {
+    await api.setBinding(target, combo);
+  } catch (e) {
+    console.error(String(e));
+  }
+  await loadSettings();
+}
+
 async function start(): Promise<void> {
   render();
   installShortcuts();
   installMenuDismiss();
+  installTooltips();
+
+  // A tiling compositor rounds its own windows; drawing ours on top of that
+  // gives a double corner at two curvatures.
+  const systemCorners = await api.compositorRoundsWindows().catch(() => false);
+  document.documentElement.setAttribute(
+    "data-corners",
+    systemCorners ? "system" : "app",
+  );
 
   // Open on the most recent pick, falling back to the prototype's own colour
   // so the window is never empty on a fresh install.
@@ -407,7 +542,7 @@ async function start(): Promise<void> {
   const [min, capacity] = await api.paletteLimits().catch(() => [3, 25] as const);
   state.build.min = min;
   state.build.capacity = capacity;
-  state.build.name = await api.nextPaletteName().catch(() => "Untitled");
+  state.build.suggested = await api.nextPaletteName().catch(() => "Untitled");
   state.build.formats = await api.exportFormats().catch(() => []);
   render();
 }

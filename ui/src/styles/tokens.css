@@ -1,10 +1,14 @@
 /*
- * Theme tokens, copied verbatim from the prototype's THEMES object in
- * `Prototype/package/Pallet Window.dc.html`.
+ * Theme tokens.
  *
- * These values are the design. They are not to be "improved", rounded or
- * unified: the two themes deliberately differ in corner radius and typeface as
- * well as colour, and the prototype is the reference for how the window looks.
+ * `sketchbook` is copied verbatim from the prototype's THEMES object in
+ * `Prototype/package/Pallet Window.dc.html` and is not to be "improved".
+ *
+ * `studio` departs from the prototype deliberately: it is now a Solarized Dark
+ * palette, deep blue rather than the original neutral charcoal, which reads as
+ * a proper counterpart to the warm Sketchbook rather than a greyscale of it.
+ * Base values are Ethan Schoonover's, so the two themes have independent
+ * provenance rather than one being a tint of the other.
  */
 
 :root[data-theme="sketchbook"] {
@@ -18,27 +22,68 @@
   --edge: rgba(58, 52, 44, 0.07);
   --hover: rgba(58, 52, 44, 0.045);
   --accent: #c87d5b;
+  /* Washes of the accent, for fills that must stay legible with accent text
+     on top. White on #c87d5b is about 2.9:1 — a tint keeps the contrast the
+     text already had. */
+  --accentSoft: rgba(200, 125, 91, 0.16);
+  --accentFaint: rgba(200, 125, 91, 0.07);
+  /* Closing the window is the one destructive control on the chrome, so it
+     says so rather than borrowing the accent. */
+  --danger: #a33627;
+  --dangerSoft: rgba(223, 45, 60, 0.25);
+  --dangerDark: #661308;
   --rad: 20px;
   --rad2: 16px;
   --font: "Karla";
   --mono: "DM Mono";
-  --shadow: 0 20px 44px -18px rgba(90, 70, 50, 0.3);
+  --shadow: 0 20px 44px -18px rgba(90, 70, 50, 0.35);
 }
 
 :root[data-theme="studio"] {
-  --bg: #262a2b;
-  --panel: #2f3435;
-  --panelHi: #39403f;
-  --chrome: #202425;
-  --ink: #efede6;
-  --mute: rgba(239, 237, 230, 0.44);
-  --line: rgba(239, 237, 230, 0.09);
-  --edge: rgba(239, 237, 230, 0.08);
-  --hover: rgba(239, 237, 230, 0.06);
-  --accent: #9fc7a6;
+  /* Solarized Dark: base03 #002b36, base02 #073642, base01 #586e75,
+     base0 #839496, base1 #93a1a1, blue #268bd2, cyan #2aa198. */
+  --bg: #002b36;
+  --panel: #073642;
+  --panelHi: #0d4552;
+  --chrome: #00212b;
+  --ink: #93a1a1;
+  --mute: rgba(131, 148, 150, 0.62);
+  --line: rgba(147, 161, 161, 0.13);
+  --edge: rgba(147, 161, 161, 0.1);
+  --hover: rgba(147, 161, 161, 0.08);
+  /* Solarized blue, which lifts against base03 without the glare of cyan. */
+  --accent: #268bd2;
+  --accentSoft: rgba(38, 139, 210, 0.22);
+  --accentFaint: rgba(38, 139, 210, 0.09);
+  /* Closing is destructive on both themes, but a dark theme has to reach the
+     same contrast from the other direction. Solarized red at 30% over base03
+     composites to #42262c — the red reading as a plum where it lies over the
+     blue — and the glyph then has to be lighter than the wash rather than
+     darker. #ff7b72 sits at 5.4:1 against it: less than Sketchbook's 7.4:1,
+     because anything darker stops separating from base03 at all, but well past
+     the 4.5:1 a small glyph needs. */
+  --danger: #dc322f;
+  --dangerSoft: rgba(220, 50, 47, 0.3);
+  --dangerDark: #ff7b72;
   --rad: 22px;
   --rad2: 18px;
   --font: "Sora";
   --mono: "DM Mono";
-  --shadow: 0 24px 52px -20px rgba(0, 0, 0, 0.6);
+  --shadow: 0 24px 52px -20px rgba(0, 0, 0, 0.75);
+}
+
+/*
+ * Window corners.
+ *
+ * A tiling compositor rounds windows itself, so drawing our own radius on top
+ * produces a visible double corner at two different curvatures. `data-corners`
+ * is set at start-up from the detected desktop: "system" lets the compositor
+ * do it, "app" draws the design's radius, which is what Windows and floating
+ * desktops need since nothing rounds the window for them.
+ */
+:root[data-corners="system"] {
+  --shell-rad: 0px;
+}
+:root:not([data-corners="system"]) {
+  --shell-rad: var(--rad);
 }

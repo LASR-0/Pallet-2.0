@@ -5,11 +5,12 @@
 //! makes the shader — where every fidelity decision lives — testable without a
 //! display server.
 
+use bytemuck::Zeroable as _;
 use pallet_capture::Frame;
-use pallet_color::Color;
 use wgpu::util::DeviceExt;
 
 use crate::error::{Error, Result};
+use crate::hud::chrome::Layer;
 
 /// Everything the shader needs for one frame.
 ///
@@ -23,8 +24,8 @@ struct Uniforms {
     radius: f32,
     sample: f32,
     grid: f32,
-    _pad: [f32; 2],
-    picked: [f32; 4],
+    scale: f32,
+    vignette: f32,
 }
 
 /// What to draw this frame.
@@ -40,8 +41,18 @@ pub struct LoupeView {
     pub sample: u32,
     /// Whether to draw the pixel grid.
     pub grid: bool,
-    /// The colour under the cursor, drawn on the rim.
-    pub picked: Color,
+    /// Physical pixels per design pixel on this monitor.
+    ///
+    /// Every measurement in the shader comes from the design in CSS pixels, so
+    /// this is what keeps the ring, grid and vignette the same apparent size
+    /// on a HiDPI display as on a 1x one.
+    pub scale: f32,
+    /// Strength of the inner shadow that seats the loupe on the page.
+    ///
+    /// The design asks for `.28`. It is the only thing in the loupe that
+    /// tints pixels rather than annotating around them, so it is adjustable:
+    /// zero makes the magnified image byte-exact from the centre to the rim.
+    pub vignette: f32,
 }
 
 impl Default for LoupeView {
@@ -49,10 +60,12 @@ impl Default for LoupeView {
         Self {
             cursor: (0, 0),
             zoom: 16,
-            radius: 140.0,
+            // 176px across: the design's eleven 16px cells at 16x.
+            radius: crate::hud::chrome::LOUPE_DIAMETER / 2.0,
             sample: 1,
             grid: true,
-            picked: Color::new(0, 0, 0),
+            scale: 1.0,
+            vignette: VIGNETTE,
         }
     }
 }
@@ -65,6 +78,9 @@ impl Default for LoupeView {
 /// through untouched is what makes a frozen screen pixel-identical to the live
 /// one.
 pub const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+
+/// The design's `inset 0 0 26px rgba(0,0,0,.28)`.
+pub const VIGNETTE: f32 = 0.28;
 
 /// One monitor's frozen pixels, uploaded and ready to draw.
 ///
@@ -95,6 +111,8 @@ pub struct Renderer {
     queue: wgpu::Queue,
     pipeline: wgpu::RenderPipeline,
     layout: wgpu::BindGroupLayout,
+    chrome_pipeline: wgpu::RenderPipeline,
+    chrome_layout: wgpu::BindGroupLayout,
 }
 
 impl Renderer {
@@ -183,11 +201,15 @@ impl Renderer {
             multiview_mask: None,
         });
 
+        let (chrome_pipeline, chrome_layout) = build_chrome_pipeline(&device);
+
         Self {
             device,
             queue,
             pipeline,
             layout,
+            chrome_pipeline,
+            chrome_layout,
         }
     }
 
@@ -269,8 +291,8 @@ impl Renderer {
                     radius: 0.0,
                     sample: 1.0,
                     grid: 1.0,
-                    _pad: [0.0, 0.0],
-                    picked: [0.0, 0.0, 0.0, 1.0],
+                    scale: 1.0,
+                    vignette: VIGNETTE,
                 }),
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             });
@@ -312,6 +334,31 @@ impl Renderer {
         height: u32,
         view: LoupeView,
     ) -> Result<Vec<u8>> {
+        self.readback(screen, width, height, view, None)
+    }
+
+    /// The same, with the HUD's panels composited on top.
+    pub fn render_hud_to_pixels(
+        &self,
+        screen: &Screen,
+        width: u32,
+        height: u32,
+        view: LoupeView,
+        gpu: &mut ChromeGpu,
+        layers: &[Layer<'_>],
+    ) -> Result<Vec<u8>> {
+        gpu.upload(self, layers, (width, height));
+        self.readback(screen, width, height, view, Some(gpu))
+    }
+
+    fn readback(
+        &self,
+        screen: &Screen,
+        width: u32,
+        height: u32,
+        view: LoupeView,
+        chrome: Option<&ChromeGpu>,
+    ) -> Result<Vec<u8>> {
         let target = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("offscreen"),
             size: wgpu::Extent3d {
@@ -327,7 +374,7 @@ impl Renderer {
             view_formats: &[],
         });
         let target_view = target.create_view(&wgpu::TextureViewDescriptor::default());
-        self.draw(screen, &target_view, view);
+        self.render(screen, &target_view, view, chrome);
 
         // Readback rows must be aligned, so the buffer is usually wider than
         // the image and is trimmed after mapping.
@@ -392,8 +439,34 @@ impl Renderer {
         Ok(out)
     }
 
-    /// Draw one screen's frozen frame, and the loupe if it is on this screen.
+    /// Draw one screen's frozen frame and the loupe over it.
     pub fn draw(&self, screen: &Screen, target: &wgpu::TextureView, view: LoupeView) {
+        self.render(screen, target, view, None);
+    }
+
+    /// Draw the frozen frame, the loupe, and the HUD's panels over both.
+    ///
+    /// `gpu` carries the panel textures between frames so a cursor move that
+    /// changes nothing on the HUD re-uploads nothing.
+    pub fn draw_hud(
+        &self,
+        screen: &Screen,
+        target: &wgpu::TextureView,
+        view: LoupeView,
+        gpu: &mut ChromeGpu,
+        layers: &[Layer<'_>],
+    ) {
+        gpu.upload(self, layers, screen.size());
+        self.render(screen, target, view, Some(gpu));
+    }
+
+    fn render(
+        &self,
+        screen: &Screen,
+        target: &wgpu::TextureView,
+        view: LoupeView,
+        chrome: Option<&ChromeGpu>,
+    ) {
         self.queue.write_buffer(
             &screen.uniforms,
             0,
@@ -405,13 +478,8 @@ impl Renderer {
                 radius: view.radius,
                 sample: view.sample as f32,
                 grid: if view.grid { 1.0 } else { 0.0 },
-                _pad: [0.0, 0.0],
-                picked: [
-                    f32::from(view.picked.r) / 255.0,
-                    f32::from(view.picked.g) / 255.0,
-                    f32::from(view.picked.b) / 255.0,
-                    1.0,
-                ],
+                scale: view.scale.max(0.5),
+                vignette: view.vignette.clamp(0.0, 1.0),
             }),
         );
 
@@ -440,7 +508,250 @@ impl Renderer {
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &screen.bind_group, &[]);
             pass.draw(0..3, 0..1);
+
+            // The HUD's panels, in the order the design stacks them, straight
+            // over the loupe pass in the same render pass.
+            if let Some(chrome) = chrome {
+                pass.set_pipeline(&self.chrome_pipeline);
+                for slot in chrome.live() {
+                    pass.set_bind_group(0, &slot.bind_group, &[]);
+                    pass.draw(0..6, 0..1);
+                }
+            }
         }
         self.queue.submit(Some(encoder.finish()));
     }
+}
+
+/// Where one panel goes on screen, as the chrome shader wants it.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+struct Quad {
+    rect: [f32; 4],
+    viewport: [f32; 2],
+    _pad: [f32; 2],
+}
+
+/// One panel's GPU resources.
+#[derive(Debug)]
+struct Slot {
+    texture: wgpu::Texture,
+    buffer: wgpu::Buffer,
+    bind_group: wgpu::BindGroup,
+    width: u32,
+    height: u32,
+    /// The panel version currently in the texture, and the quad currently in
+    /// the buffer. Both are skipped when they already match.
+    version: u64,
+    quad: Quad,
+}
+
+/// The HUD panels' textures, reused across frames.
+///
+/// A panel's size changes only when its text does — the readout widens by a
+/// character when the RGB triple gains a digit — so the textures are kept and
+/// rewritten in place, and rebuilt only on the rare frame where a size moves.
+#[derive(Debug, Default)]
+pub struct ChromeGpu {
+    slots: Vec<Slot>,
+    live: usize,
+}
+
+impl ChromeGpu {
+    /// An empty set of panels.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn live(&self) -> &[Slot] {
+        &self.slots[..self.live]
+    }
+
+    fn upload(&mut self, renderer: &Renderer, layers: &[Layer<'_>], target: (u32, u32)) {
+        self.live = 0;
+        for layer in layers {
+            let (w, h) = (layer.bitmap.width, layer.bitmap.height);
+            if w == 0 || h == 0 {
+                continue;
+            }
+            let i = self.live;
+            self.live += 1;
+
+            // A panel whose size changed needs a new texture; one that has
+            // merely moved keeps everything and rewrites 32 bytes.
+            let resized = self
+                .slots
+                .get(i)
+                .is_none_or(|s| s.width != w || s.height != h);
+            if resized {
+                let slot = renderer.create_slot(w, h);
+                if i < self.slots.len() {
+                    self.slots[i] = slot;
+                } else {
+                    self.slots.push(slot);
+                }
+            }
+
+            let quad = Quad {
+                rect: [layer.x as f32, layer.y as f32, w as f32, h as f32],
+                viewport: [target.0 as f32, target.1 as f32],
+                _pad: [0.0, 0.0],
+            };
+            let slot = &mut self.slots[i];
+
+            // The overlay redraws on every pointer move, but the instruction
+            // pill and the zoom badge hold the same pixels for the whole
+            // session. Copying every panel to the GPU each frame was most of
+            // what the HUD cost to draw.
+            if resized || slot.version != layer.version {
+                renderer.queue.write_texture(
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &slot.texture,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    &layer.bitmap.pixels,
+                    wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(w * 4),
+                        rows_per_image: Some(h),
+                    },
+                    wgpu::Extent3d {
+                        width: w,
+                        height: h,
+                        depth_or_array_layers: 1,
+                    },
+                );
+                slot.version = layer.version;
+            }
+
+            if resized || slot.quad != quad {
+                renderer
+                    .queue
+                    .write_buffer(&slot.buffer, 0, bytemuck::bytes_of(&quad));
+                slot.quad = quad;
+            }
+        }
+    }
+}
+
+impl Renderer {
+    fn create_slot(&self, width: u32, height: u32) -> Slot {
+        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("hud-panel"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: FORMAT,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("hud-quad"),
+            size: std::mem::size_of::<Quad>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("hud-panel-bind"),
+            layout: &self.chrome_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: buffer.as_entire_binding(),
+                },
+            ],
+        });
+        Slot {
+            texture,
+            buffer,
+            bind_group,
+            width,
+            height,
+            // No version can match this, so the first frame always uploads.
+            version: 0,
+            quad: Quad::zeroed(),
+        }
+    }
+}
+
+fn build_chrome_pipeline(device: &wgpu::Device) -> (wgpu::RenderPipeline, wgpu::BindGroupLayout) {
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("hud-chrome"),
+        source: wgpu::ShaderSource::Wgsl(include_str!("chrome.wgsl").into()),
+    });
+
+    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("hud-chrome-bind-layout"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ],
+    });
+
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("hud-chrome-pipeline-layout"),
+        bind_group_layouts: &[Some(&layout)],
+        ..Default::default()
+    });
+
+    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("hud-chrome-pipeline"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs"),
+            buffers: &[],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("fs"),
+            // Straight alpha over what the loupe pass already drew. The target
+            // is non-sRGB, so this composites in the same encoded space the
+            // panels were rasterised in and the browser would blend in.
+            targets: &[Some(wgpu::ColorTargetState {
+                format: FORMAT,
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        cache: None,
+        multiview_mask: None,
+    });
+
+    (pipeline, layout)
 }

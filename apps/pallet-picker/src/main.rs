@@ -71,12 +71,14 @@ fn main() -> Result<()> {
         let response = match request {
             Request::Ping => Response::Pong {
                 version: env!("CARGO_PKG_VERSION").into(),
+                build: transport::own_build_stamp(),
             },
             Request::Shutdown => {
                 let _ = write_message(
                     &mut stream,
                     &Response::Pong {
                         version: env!("CARGO_PKG_VERSION").into(),
+                        build: transport::own_build_stamp(),
                     },
                 );
                 tracing::info!("shutting down on request");
@@ -120,19 +122,55 @@ fn serve_pick(
     tracing::info!(capture_ms = t.elapsed().as_millis(), "warm pick: captured");
     let zoom = options.zoom.unwrap_or(16);
     let average = options.average_size.unwrap_or(5);
+    let keys = options
+        .keys
+        .clone()
+        .map(|k| pallet_overlay::LoupeKeys {
+            commit: k.commit,
+            save: k.save,
+            cancel: k.cancel,
+        })
+        .unwrap_or_default();
 
-    match pallet_overlay::run(context, shot, zoom, average) {
-        Ok(pallet_overlay::Outcome::Picked {
-            color,
-            at,
-            source_space,
-            save,
-        }) => Response::Picked {
-            hex: color.to_hex(),
-            at,
-            source_space,
-            save,
-        },
+    // A palette request keeps the overlay up until the tray fills; a single
+    // pick sends nothing and shows no tray at all.
+    let palette = options.palette.as_ref().map(|p| pallet_overlay::Palette {
+        collected: p
+            .collected
+            .iter()
+            .filter_map(|hex| pallet_color::Color::parse_hex(hex).ok())
+            .collect(),
+        target: p.target,
+    });
+    let many = palette.is_some();
+
+    match pallet_overlay::run(context, shot, zoom, average, keys, palette) {
+        Ok(pallet_overlay::Outcome::Picked { taken, save }) => {
+            if many {
+                Response::PickedSet {
+                    colours: taken
+                        .iter()
+                        .map(|t| pallet_ipc::TakenColour {
+                            hex: t.color.to_hex(),
+                            at: t.at,
+                            source_space: t.source_space.clone(),
+                        })
+                        .collect(),
+                }
+            } else {
+                // A single pick always yields exactly one; the vector shape is
+                // the palette pass's, not this one's.
+                match taken.into_iter().next() {
+                    Some(t) => Response::Picked {
+                        hex: t.color.to_hex(),
+                        at: t.at,
+                        source_space: t.source_space,
+                        save,
+                    },
+                    None => Response::Cancelled,
+                }
+            }
+        }
         Ok(pallet_overlay::Outcome::Cancelled) => Response::Cancelled,
         Err(e) => Response::Error {
             message: e.to_string(),

@@ -16,6 +16,7 @@ tracing.workspace = true
 wgpu.workspace = true
 bytemuck.workspace = true
 pollster.workspace = true
+fontdue.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 smithay-client-toolkit.workspace = true
@@ -24,3 +25,6 @@ raw-window-handle.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+image.workspace = true

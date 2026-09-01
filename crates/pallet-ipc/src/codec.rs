@@ -88,6 +88,8 @@ mod tests {
         let sent = Request::Pick(PickOptions {
             zoom: Some(16),
             average_size: Some(5),
+            keys: None,
+            palette: None,
         });
         write_message(&mut buffer, &sent).unwrap();
 

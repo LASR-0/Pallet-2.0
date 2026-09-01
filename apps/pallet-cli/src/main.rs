@@ -298,6 +298,12 @@ fn main() -> Result<()> {
             let options = pallet_ipc::PickOptions {
                 zoom: zoom.or(Some(u32::from(config.picker.loupe_zoom))),
                 average_size: Some(u32::from(config.picker.average_size)),
+                keys: Some(pallet_ipc::LoupeKeys {
+                    commit: config.keys.loupe_commit.clone(),
+                    save: config.keys.loupe_save.clone(),
+                    cancel: config.keys.loupe_cancel.clone(),
+                }),
+                palette: None,
             };
 
             // Prefer the resident picker: it holds a warm GPU context, which is
@@ -370,7 +376,11 @@ fn main() -> Result<()> {
                     std::process::exit(1);
                 }
                 Response::Error { message } => anyhow::bail!(message),
-                Response::Pong { .. } => anyhow::bail!("unexpected reply from the picker"),
+                // `pallet pick` never asks for a palette, so neither of these
+                // can arrive in reply to it.
+                Response::PickedSet { .. } | Response::Pong { .. } => {
+                    anyhow::bail!("unexpected reply from the picker")
+                }
             }
         }
         Command::Capture { monitor, out } => {
@@ -550,7 +560,7 @@ fn ping() -> Option<String> {
     let mut stream = stream;
     write_message(&mut stream, &Request::Ping).ok()?;
     match read_message(&mut stream).ok()? {
-        Response::Pong { version } => Some(version),
+        Response::Pong { version, .. } => Some(version),
         _ => None,
     }
 }
@@ -571,24 +581,36 @@ fn pick_in_process(options: &pallet_ipc::PickOptions) -> Result<Response> {
         gpu_ms = (t.elapsed() - captured).as_millis(),
         "cold start"
     );
+    let keys = options
+        .keys
+        .clone()
+        .map(|k| pallet_overlay::LoupeKeys {
+            commit: k.commit,
+            save: k.save,
+            cancel: k.cancel,
+        })
+        .unwrap_or_default();
+
     let outcome = pallet_overlay::run(
         &context,
         shot,
         options.zoom.unwrap_or(16),
         options.average_size.unwrap_or(5),
+        keys,
+        // `pallet pick` takes one colour; a palette tray would be a lie.
+        None,
     )?;
 
     Ok(match outcome {
-        pallet_overlay::Outcome::Picked {
-            color,
-            at,
-            source_space,
-            save,
-        } => Response::Picked {
-            hex: color.to_hex(),
-            at,
-            source_space,
-            save,
+        // `pallet pick` asks for one colour, so a session yields one or none.
+        pallet_overlay::Outcome::Picked { taken, save } => match taken.into_iter().next() {
+            Some(t) => Response::Picked {
+                hex: t.color.to_hex(),
+                at: t.at,
+                source_space: t.source_space,
+                save,
+            },
+            None => Response::Cancelled,
         },
         pallet_overlay::Outcome::Cancelled => Response::Cancelled,
     })

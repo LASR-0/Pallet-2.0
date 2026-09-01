@@ -221,16 +221,14 @@ fn committing_returns_the_colour_and_where_it_came_from() {
     s.apply(Input::Commit);
 
     match s.outcome() {
-        Some(Outcome::Picked {
-            color,
-            at,
-            source_space,
-            save,
-        }) => {
-            assert_eq!(*color, Color::new(50, 20, 0x40));
-            assert_eq!(*at, (150, 20));
+        Some(Outcome::Picked { taken, save }) => {
+            let [one] = taken.as_slice() else {
+                panic!("a single pick returns exactly one colour, got {taken:?}")
+            };
+            assert_eq!(one.color, Color::new(50, 20, 0x40));
+            assert_eq!(one.at, (150, 20));
             // The wide-gamut provenance must survive to the library.
-            assert_eq!(source_space.as_deref(), Some("display-p3"));
+            assert_eq!(one.source_space.as_deref(), Some("display-p3"));
             assert!(!save, "a plain commit copies but does not keep");
         }
         other => panic!("expected a pick, got {other:?}"),
@@ -242,7 +240,7 @@ fn an_srgb_monitor_records_no_profile_tag() {
     let mut s = session();
     s.apply(Input::Commit);
     match s.outcome() {
-        Some(Outcome::Picked { source_space, .. }) => assert_eq!(*source_space, None),
+        Some(Outcome::Picked { taken, .. }) => assert_eq!(taken[0].source_space, None),
         other => panic!("expected a pick, got {other:?}"),
     }
 }
@@ -286,9 +284,9 @@ fn committing_with_save_asks_for_the_colour_to_be_kept() {
     s.apply(Input::CommitAndSave);
 
     match s.outcome() {
-        Some(Outcome::Picked { save, color, .. }) => {
+        Some(Outcome::Picked { save, taken }) => {
             assert!(save);
-            assert_eq!(*color, Color::new(10, 10, 0x40));
+            assert_eq!(taken[0].color, Color::new(10, 10, 0x40));
         }
         other => panic!("expected a saved pick, got {other:?}"),
     }
@@ -299,4 +297,93 @@ fn a_save_commit_with_nothing_under_the_cursor_still_cancels() {
     let mut s = Session::new(Capture::default(), (0, 0), 16, 5);
     s.apply(Input::CommitAndSave);
     assert_eq!(s.outcome(), Some(&Outcome::Cancelled));
+}
+
+// ---- gathering a palette in one pass ----
+
+#[test]
+fn a_palette_pass_stays_open_until_its_last_slot_is_filled() {
+    // The overlay closing after one colour was the bug: a palette is chosen by
+    // comparing colours on one frozen screen, so it has to survive four picks.
+    let mut s = Session::for_palette(desktop(), (10, 10), 16, 5, 3);
+
+    s.apply(Input::PointerTo { x: 10, y: 10 });
+    s.apply(Input::Commit);
+    assert!(!s.is_finished(), "closed after the first colour");
+    assert_eq!(s.taken().len(), 1);
+
+    s.apply(Input::PointerTo { x: 150, y: 20 });
+    s.apply(Input::Commit);
+    assert!(!s.is_finished(), "closed after the second colour");
+
+    s.apply(Input::PointerTo { x: 20, y: 30 });
+    s.apply(Input::Commit);
+    assert!(s.is_finished(), "should close once the palette is full");
+
+    match s.outcome() {
+        Some(Outcome::Picked { taken, .. }) => {
+            assert_eq!(taken.len(), 3);
+            assert_eq!(taken[1].at, (150, 20), "order is the order they were taken");
+        }
+        other => panic!("expected a set of picks, got {other:?}"),
+    }
+}
+
+#[test]
+fn finishing_a_palette_early_keeps_what_it_gathered() {
+    // Backing out must not throw away colours already chosen; wanting four
+    // rather than five is a normal thing to decide halfway through.
+    let mut s = Session::for_palette(desktop(), (10, 10), 16, 5, 5);
+    s.apply(Input::Commit);
+    s.apply(Input::PointerTo { x: 150, y: 20 });
+    s.apply(Input::Commit);
+    s.apply(Input::Cancel);
+
+    match s.outcome() {
+        Some(Outcome::Picked { taken, save }) => {
+            assert_eq!(taken.len(), 2, "kept both colours");
+            assert!(!save);
+        }
+        other => panic!("expected the gathered colours, got {other:?}"),
+    }
+}
+
+#[test]
+fn backing_out_of_a_palette_before_taking_anything_still_cancels() {
+    let mut s = Session::for_palette(desktop(), (10, 10), 16, 5, 5);
+    s.apply(Input::Cancel);
+    assert_eq!(s.outcome(), Some(&Outcome::Cancelled));
+}
+
+#[test]
+fn the_tray_fills_as_the_palette_is_gathered() {
+    // The HUD reads this every frame, so it is what makes the slots fill in.
+    let mut s = Session::for_palette(desktop(), (10, 10), 16, 5, 4);
+    assert!(s.taken().is_empty());
+    assert_eq!(s.target(), 4);
+
+    s.apply(Input::Commit);
+    assert_eq!(s.taken().len(), 1);
+    assert_eq!(s.taken()[0].color, Color::new(10, 10, 0x40));
+}
+
+#[test]
+fn a_commit_over_nothing_does_not_consume_a_palette_slot() {
+    let mut s = Session::for_palette(Capture::default(), (0, 0), 16, 5, 3);
+    s.apply(Input::Commit);
+    assert!(!s.is_finished(), "an empty desktop should not end the pass");
+    assert!(
+        s.taken().is_empty(),
+        "nothing was taken, so nothing is held"
+    );
+}
+
+#[test]
+fn a_single_pick_is_a_palette_of_one() {
+    // `Session::new` is the same machine with a target of one, so a plain pick
+    // still ends on the first commit.
+    let mut s = Session::new(desktop(), (10, 10), 16, 5);
+    assert_eq!(s.target(), 1);
+    s.apply(Input::Commit);
+    assert!(s.is_finished());
 }

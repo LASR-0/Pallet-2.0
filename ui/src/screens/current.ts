@@ -6,7 +6,9 @@
  */
 
 import { el, spacer } from "../dom";
+import { onContextMenu } from "../menu";
 import { HARMONIES, type AppState, type Harmony } from "../state";
+import { onWheelStep, stepIndex } from "../wheel";
 
 const MONO = "var(--mono),monospace";
 const SANS = "var(--font),sans-serif";
@@ -28,6 +30,7 @@ export function renderCurrent(
     onCopy: (value: string) => void;
     onPickHex: (hex: string) => void;
     onHarmony: (harmony: Harmony) => void;
+    onKeep: (hex: string) => void;
   },
 ): HTMLElement {
   const detail = state.detail;
@@ -39,6 +42,9 @@ export function renderCurrent(
   }
 
   // --- swatch header ---
+  // Keeping a colour has no control of its own: the prototype's header carries
+  // the swatch, its hex and its name, and a button would be chrome the design
+  // does not have. Right-click and the bindable key cover it instead.
   const header = el(
     "div",
     {
@@ -102,9 +108,11 @@ export function renderCurrent(
           }),
           el("span", {
             class: "hv-copy clickable",
+            // Colour and border colour come from `.hv-copy`, so its hover
+            // rule has something to override.
             style:
               `padding:4px 8px;border-radius:6px;font:400 9.5px/1 ${MONO};` +
-              "letter-spacing:.08em;color:var(--mute);border:1px solid var(--line)",
+              "letter-spacing:.08em;border-width:1px;border-style:solid",
             text: "COPY",
             onClick: () => actions.onCopy(row.value),
           }),
@@ -114,6 +122,8 @@ export function renderCurrent(
   );
 
   // --- harmony ---
+  // Scrolling anywhere over the row steps through the harmonies, which beats
+  // aiming at one of five 40px targets to compare them.
   const harmonyButtons = el(
     "div",
     { style: "display:flex;gap:4px" },
@@ -132,6 +142,11 @@ export function renderCurrent(
       });
     }),
   );
+  onWheelStep(harmonyButtons, (direction) => {
+    const at = HARMONIES.findIndex(([id]) => id === state.harmony);
+    const next = HARMONIES[stepIndex(at < 0 ? 0 : at, direction, HARMONIES.length)];
+    if (next) actions.onHarmony(next[0]);
+  });
 
   const harmonySwatches = el(
     "div",
@@ -194,6 +209,11 @@ export function renderCurrent(
     { style: "display:flex;flex-direction:column;gap:9px" },
     [sectionHeading("TINTS & SHADES"), rampBar, rampLabels],
   );
+
+  onContextMenu(header, () => [
+    { label: "Keep in library", onSelect: () => actions.onKeep(detail.hex) },
+    { label: "Copy hex", onSelect: () => actions.onCopy(detail.hex) },
+  ]);
 
   return el("div", { style: "display:flex;flex-direction:column;gap:14px" }, [
     header,

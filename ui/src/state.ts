@@ -60,6 +60,15 @@ export interface SettingRow {
   editable: boolean;
 }
 
+/** A remappable command. */
+export interface Binding {
+  key: string;
+  label: string;
+  hint: string;
+  combo: string;
+  inLoupe: boolean;
+}
+
 /** One entry in the pick history. */
 export interface RecentPick {
   id: string;
@@ -75,7 +84,18 @@ export interface ExportFormat {
 
 export interface BuildState {
   colours: string[];
+  /** What the user typed. Empty means take {@link BuildState.suggested}. */
   name: string;
+  /**
+   * The auto-generated name, shown as the field's placeholder.
+   *
+   * Kept apart from `name` so an untouched field is visibly empty. Pre-filling
+   * it made the field look like a label rather than something to edit, and it
+   * went unnoticed until after the palette had been saved under it.
+   */
+  suggested: string;
+  /** Save was pressed while unnamed, so the field is asking to be filled. */
+  needsName: boolean;
   min: number;
   capacity: number;
   picking: boolean;
@@ -103,6 +123,11 @@ export interface AppState {
   recents: RecentPick[] | null;
   picking: boolean;
   settings: SettingRow[] | null;
+  bindings: Binding[] | null;
+  /** A colour just kept, whose name is open for editing on Colours. */
+  naming: string | null;
+  /** The command currently waiting for a keypress, if any. */
+  capturing: string | null;
 }
 
 export const TABS: [Screen, string][] = [

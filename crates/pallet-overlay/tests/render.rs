@@ -102,6 +102,9 @@ fn the_loupe_magnifies_by_the_requested_factor() {
                 zoom: 8,
                 radius: 20.0,
                 grid: false,
+                // The vignette darkens pixels toward the rim, which would
+                // make this a test of the tint rather than the mapping.
+                vignette: 0.0,
                 ..Default::default()
             },
         )
@@ -139,6 +142,7 @@ fn magnification_is_nearest_neighbour_never_interpolated() {
                 zoom: 16,
                 radius: 24.0,
                 grid: false,
+                vignette: 0.0,
                 ..Default::default()
             },
         )
@@ -149,10 +153,18 @@ fn magnification_is_nearest_neighbour_never_interpolated() {
     // blue would mean the sampler interpolated and invented a colour.
     for x in 20..44u32 {
         for y in 20..44u32 {
-            let dx = x as f32 - 32.5;
-            let dy = y as f32 - 32.5;
+            // Pixel centres, matching the fragment coordinates the shader
+            // works in; half a pixel out here misses the annotation band.
+            let dx = x as f32 + 0.5 - 32.5;
+            let dy = y as f32 + 0.5 - 32.5;
             if (dx * dx + dy * dy).sqrt() > 16.0 {
                 continue; // stay clear of the rim
+            }
+            // The ring around the cell that a commit would take is drawn on
+            // purpose, half of it as translucent black over the pixel beneath.
+            let box_edge = 0.5 * 16.0;
+            if dx.abs().max(dy.abs()) <= box_edge + 3.0 {
+                continue;
             }
             let c = px(&out, 64, x, y);
             let is_source = c.b == 0x20;

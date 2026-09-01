@@ -42,6 +42,23 @@ pub fn ensure_socket_dir() -> Result<PathBuf> {
     Ok(path)
 }
 
+/// When a binary was last written, in seconds since the epoch.
+///
+/// Zero when that cannot be determined, which callers read as "unknown" and
+/// therefore never as a mismatch.
+pub fn build_stamp(path: &std::path::Path) -> u64 {
+    std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_secs())
+}
+
+/// The build stamp of the currently running executable.
+pub fn own_build_stamp() -> u64 {
+    std::env::current_exe().map_or(0, |p| build_stamp(&p))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

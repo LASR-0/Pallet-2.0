@@ -47,15 +47,46 @@ body {
 
 /* The prototype expresses hover as a `style-hover` attribute on each element.
    These classes reproduce those exact declarations. */
+/* Window-chrome buttons. The resting colour lives here so the hover rules
+   below have something to override — stated inline on the element, it wins
+   over any stylesheet rule and the hover silently does nothing. */
+.hv-chrome,
+.hv-close {
+  color: var(--mute);
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
+}
 .hv-chrome:hover {
   background: var(--hover);
+  color: var(--ink);
 }
+/* A wash rather than a block, and red rather than the accent: this is the one
+   control on the chrome that throws work away. */
 .hv-close:hover {
-  background: var(--accent);
-  color: #fff;
+  background: var(--dangerSoft);
+  color: var(--dangerDark);
+}
+
+/* `non-scaling-stroke` keeps these in rendered pixels: the icon draws a 16-unit
+   box into 13px, so without it a stroke-width of 3 would arrive as 2.4. */
+.hv-close svg path {
+  stroke-width: 1.5px;
+  vector-effect: non-scaling-stroke;
+  transition: stroke-width 0.12s ease;
+}
+.hv-close:hover svg path {
+  stroke-width: 3px;
 }
 .hv-row:hover {
   background: var(--panelHi);
+}
+/* The resting colours live here, not inline on the element. An inline
+   `color` outranks any stylesheet rule, so declaring it on the element left
+   `:hover` below with nothing to change — which is why these never lit up. */
+.hv-copy {
+  color: var(--mute);
+  border-color: var(--line);
 }
 .hv-copy:hover {
   color: var(--accent);
@@ -67,4 +98,112 @@ body {
 
 .clickable {
   cursor: pointer;
+}
+
+/* The filter carousel. Its own scrollbar would sit under the fading pills and
+   never line up with them, so the rail is scrolled by wheel, drag or snap
+   instead of by a visible bar. */
+.pl-rail::-webkit-scrollbar {
+  display: none;
+}
+
+/* The Clear pill grows in rather than appearing, so the sort row below does
+   not jump without warning. */
+@keyframes pl-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.86);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.pl-pop {
+  animation: pl-pop 0.16s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+
+/* Filter pills. Colour transitions only: the rail sets each pill's transform
+   directly from the scroll offset, so transitioning it would fight the finger. */
+.pl-pill {
+  color: var(--mute);
+  border-color: var(--line);
+  transition:
+    color 0.14s ease,
+    border-color 0.14s ease;
+}
+.pl-pill.pl-on {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.pl-pill:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* Clear, sitting over the faded left edge of the filter rail. It fills on
+   hover rather than just brightening: it undoes work, so it should feel like a
+   button rather than another tag. */
+.pl-clear {
+  color: var(--accent);
+  transition:
+    background 0.14s ease,
+    border-color 0.14s ease;
+}
+
+/* Its own keyframes, because it is centred with `translateY(-50%)` and a
+   plain `scale()` animation would drop that and let it jump down half its
+   height for the length of the animation. */
+@keyframes pl-pop-centred {
+  from {
+    opacity: 0;
+    transform: translateY(-50%) scale(0.86);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(-50%) scale(1);
+  }
+}
+.pl-clear.pl-pop {
+  animation: pl-pop-centred 0.16s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+/* A tint, keeping the accent text. A solid accent fill needs white or black
+   on top, and neither clears 3:1 against either theme's accent. */
+.pl-clear:hover {
+  background: var(--accentSoft);
+}
+
+/* Chips that do something on click: the export formats. The
+   lift is small on purpose — it should read as the row acknowledging the
+   pointer, not as the chip leaving the page. */
+.hv-copy {
+  transition:
+    color 0.14s ease,
+    border-color 0.14s ease,
+    background 0.14s ease,
+    transform 0.14s ease;
+}
+.hv-copy:hover {
+  transform: translateY(-1px);
+}
+.hv-copy:active {
+  transform: translateY(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pl-pop,
+  .pl-clear.pl-pop {
+    animation: none;
+  }
+  .pl-pill,
+  .pl-clear,
+  .hv-close svg path {
+    transition: none;
+  }
+  .hv-copy {
+    transition: none;
+  }
+  .hv-copy:hover {
+    transform: none;
+  }
 }

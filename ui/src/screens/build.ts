@@ -33,6 +33,8 @@ export interface BuildActions {
   onSave: () => void;
   onRemove: (index: number) => void;
   onRename: (name: string) => void;
+  /** Enter in the name field: save with whatever is there. */
+  onSubmitName: () => void;
   onExport: (formatId: string) => void;
 }
 
@@ -40,7 +42,18 @@ export function renderBuild(
   build: BuildState,
   actions: BuildActions,
 ): HTMLElement {
-  const { colours, name, capacity, min, picking, error, formats, exported } = build;
+  const {
+    colours,
+    name,
+    suggested,
+    needsName,
+    capacity,
+    min,
+    picking,
+    error,
+    formats,
+    exported,
+  } = build;
 
   // One slot per colour, plus the next one to fill, up to capacity.
   const slotCount = Math.min(Math.max(colours.length + 1, min), capacity);
@@ -97,9 +110,14 @@ export function renderBuild(
         style: `font:400 10px/1 ${MONO};letter-spacing:.14em;color:var(--mute)`,
         text: "PALETTE :",
       }),
-      nameField(name, actions.onRename),
+      nameField(name, suggested, needsName, actions),
     ],
   );
+  if (needsName) {
+    // Saving an unnamed palette lands here rather than in the library under
+    // "Untitled 6", so the field has to be impossible to miss.
+    header.style.borderColor = "var(--accent)";
+  }
 
   const canSave = colours.length >= min;
   const actionsRow = el("div", { style: "display:flex;gap:8px" }, [
@@ -110,12 +128,16 @@ export function renderBuild(
           ? "background:var(--hover);color:var(--mute);cursor:default;"
           : "background:var(--accent);color:#fff;cursor:pointer;") +
         `font:500 11.5px/1 ${SANS};letter-spacing:.03em`,
+      // One press now gathers the rest of the palette in a single pass, so
+      // "next colour" would undersell what the button does.
       text:
         colours.length >= capacity
           ? `Full (${capacity})`
           : picking
             ? "Picking…"
-            : "Pick next colour",
+            : colours.length === 0
+              ? "Pick colours"
+              : "Pick more colours",
       onClick:
         colours.length >= capacity || picking ? undefined : actions.onPickNext,
     }),
@@ -123,13 +145,19 @@ export function renderBuild(
       class: canSave ? "hv-copy clickable" : undefined,
       style:
         "padding:11px 14px;text-align:center;border-radius:8px;" +
-        "border:1px solid var(--line);" +
+        "border-width:1px;border-style:solid;" +
         `font:500 11.5px/1 ${SANS};` +
+        // While it can be saved, `.hv-copy` owns the colours so its hover rule
+        // can win; while it cannot, they are stated here and stay put.
         (canSave
-          ? "color:var(--mute);cursor:pointer;"
-          : "color:var(--mute);opacity:.45;cursor:default;"),
-      text: "Save",
-      title: canSave ? undefined : `Needs at least ${min} colours`,
+          ? "cursor:pointer;"
+          : "color:var(--mute);border-color:var(--line);opacity:.45;cursor:default;"),
+      text: needsName ? `Save as “${suggested}”` : "Save",
+      title: canSave
+        ? needsName
+          ? "Type a name, or press Enter to keep the suggestion"
+          : undefined
+        : `Needs at least ${min} colours`,
       onClick: canSave ? actions.onSave : undefined,
     }),
   ]);
@@ -149,9 +177,12 @@ export function renderBuild(
           return el("span", {
             class: ready ? "hv-copy clickable" : undefined,
             style:
-              "padding:6px 10px;border-radius:999px;border:1px solid var(--line);" +
-              `font:400 10px/1 ${MONO};color:var(--mute);` +
-              (ready ? "" : "opacity:.5;cursor:default"),
+              "padding:6px 10px;border-radius:999px;" +
+              "border-width:1px;border-style:solid;" +
+              `font:400 10px/1 ${MONO};` +
+              (ready
+                ? "cursor:pointer;"
+                : "color:var(--mute);border-color:var(--line);opacity:.5;cursor:default"),
             text: format.label,
             title: ready ? `Write a .${format.id} file` : "Pick a colour first",
             onClick: ready ? () => actions.onExport(format.id) : undefined,
@@ -192,11 +223,24 @@ export function renderBuild(
   );
 }
 
-/** The palette name, editable in place. */
-function nameField(name: string, onRename: (value: string) => void): HTMLElement {
+/**
+ * The palette name, with the auto-generated one showing through as the
+ * placeholder.
+ *
+ * Left blank, Enter saves under the suggestion; typing replaces it. This is
+ * the same bargain the Colours screen offers a freshly kept colour, so naming
+ * is optional everywhere rather than a form to dismiss in one place.
+ */
+function nameField(
+  name: string,
+  suggested: string,
+  needsName: boolean,
+  actions: Pick<BuildActions, "onRename" | "onSubmitName">,
+): HTMLElement {
   const input = document.createElement("input");
   input.type = "text";
   input.value = name;
+  input.placeholder = suggested;
   input.spellcheck = false;
   input.setAttribute(
     "style",
@@ -204,8 +248,23 @@ function nameField(name: string, onRename: (value: string) => void): HTMLElement
       `font:500 12px/1 ${SANS};color:var(--ink);padding:0;` +
       "user-select:text;-webkit-user-select:text",
   );
-  input.addEventListener("input", () => onRename(input.value));
-  // Digits switch tabs globally; inside a text field they are just digits.
-  input.addEventListener("keydown", (event) => event.stopPropagation());
+  input.addEventListener("input", () => actions.onRename(input.value));
+  input.addEventListener("keydown", (event) => {
+    // Digits switch tabs globally; inside a text field they are just digits.
+    event.stopPropagation();
+    if (event.key === "Enter") {
+      event.preventDefault();
+      actions.onSubmitName();
+    }
+  });
+
+  // Focus has to wait for the element to be in the document, which happens
+  // after this function returns.
+  if (needsName) {
+    requestAnimationFrame(() => {
+      input.focus();
+      input.select();
+    });
+  }
   return input;
 }

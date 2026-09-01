@@ -8,34 +8,11 @@
 import { el, spacer } from "../dom";
 import { onContextMenu } from "../menu";
 import { renderFilters } from "./filters";
-import { completionFor, filterByQuery, renderSearchBar } from "./search";
+import { completionFor, filterByQuery, renderLibraryBar } from "./search";
 import type { ColourChip, PaletteCard } from "../state";
 
 const MONO = "var(--mono),monospace";
 const SANS = "var(--font),sans-serif";
-
-/** The "LIBRARY : X ... n" bar both screens open with. */
-function libraryBar(label: string, count: number): HTMLElement {
-  return el(
-    "div",
-    {
-      style:
-        "display:flex;align-items:center;gap:9px;padding:10px 12px;border-radius:8px;" +
-        "border:1px solid var(--line);background:var(--panel)",
-    },
-    [
-      el("span", {
-        style: `font:400 10px/1 ${MONO};letter-spacing:.14em;color:var(--mute)`,
-        text: label,
-      }),
-      spacer(),
-      el("span", {
-        style: `font:400 10px/1 ${MONO};color:var(--mute)`,
-        text: String(count),
-      }),
-    ],
-  );
-}
 
 /**
  * A name that becomes editable in place.
@@ -81,6 +58,58 @@ function editableName(
   return label;
 }
 
+/**
+ * The name field for a colour that was just added.
+ *
+ * Empty, with the auto-suggested name showing through as the placeholder:
+ * typing replaces it, Enter on an empty field accepts it. Focus lands here so
+ * the keyboard is already in the right place after a pick.
+ */
+function newlyKeptName(
+  colour: ColourChip,
+  style: string,
+  actions: {
+    onRenameColour: (id: string, name: string) => void;
+    onNamed: () => void;
+  },
+): HTMLElement {
+  const input = document.createElement("input");
+  input.type = "text";
+  input.value = "";
+  input.placeholder = colour.name;
+  input.spellcheck = false;
+  input.setAttribute(
+    "style",
+    `${style};border:0;outline:none;background:transparent;padding:0;` +
+      "min-width:0;width:100%;color:var(--ink);" +
+      "user-select:text;-webkit-user-select:text",
+  );
+
+  const finish = (save: boolean) => {
+    const typed = input.value.trim();
+    if (save && typed && typed !== colour.name) {
+      actions.onRenameColour(colour.id, typed);
+    }
+    actions.onNamed();
+  };
+
+  input.addEventListener("keydown", (event) => {
+    event.stopPropagation();
+    if (event.key === "Enter") finish(true);
+    if (event.key === "Escape") finish(false);
+  });
+  input.addEventListener("blur", () => finish(true));
+
+  queueMicrotask(() => {
+    input.focus();
+    // The library reads oldest-first, so a colour just added sits at the end
+    // of a scrolling list. Without this the field has focus somewhere off
+    // screen and the user types into nothing they can see.
+    input.closest("div")?.scrollIntoView({ block: "center" });
+  });
+  return input;
+}
+
 /** Ask a name rendered by `editableName` to become editable. */
 function beginEdit(node: HTMLElement | null): void {
   node?.dispatchEvent(new CustomEvent("pallet:edit"));
@@ -105,6 +134,7 @@ export function renderPalettes(
     facets: string[];
     sort: string;
     onToggleFacet: (id: string) => void;
+    onClearFacets: () => void;
     onSort: (id: string) => void;
   },
 ): HTMLElement {
@@ -184,17 +214,23 @@ export function renderPalettes(
   paint(query);
 
   return el("div", { style: "display:flex;flex-direction:column;gap:12px" }, [
-    libraryBar("LIBRARY : PALETTES", palettes.length),
-    renderFilters(actions.facets, actions.sort, {
+    renderLibraryBar(
+      "PALETTES LIBRARY",
+      palettes.length,
+      query,
+      "Search palettes",
+      {
+        complete: (q) => completionFor(q, names),
+        onQuery: (q) => {
+          paint(q);
+          search.onQuery(q);
+        },
+      },
+    ),
+    renderFilters("palettes", actions.facets, actions.sort, {
       onToggle: actions.onToggleFacet,
       onSort: actions.onSort,
-    }),
-    renderSearchBar(query, "Search palettes", {
-      complete: (q) => completionFor(q, names),
-      onQuery: (q) => {
-        paint(q);
-        search.onQuery(q);
-      },
+      onClearFacets: actions.onClearFacets,
     }),
     results,
   ]);
@@ -212,7 +248,11 @@ export function renderColours(
     facets: string[];
     sort: string;
     onToggleFacet: (id: string) => void;
+    onClearFacets: () => void;
     onSort: (id: string) => void;
+    /** A colour just added, whose name should be open for editing. */
+    naming: string | null;
+    onNamed: () => void;
   },
 ): HTMLElement {
   if (colours === null) return empty("Loading…");
@@ -221,12 +261,19 @@ export function renderColours(
   const results = el("div", {});
 
   const chip = (c: ColourChip) => {
-    const name = editableName(
-      c.name,
+    const nameStyle =
       `font:500 10.5px/1.2 ${SANS};text-align:center;max-width:100%;` +
-        "overflow:hidden;text-overflow:ellipsis;white-space:nowrap",
-      (next) => actions.onRenameColour(c.id, next),
-    );
+      "overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
+
+    // A colour that has just been kept opens straight into its name field,
+    // with the suggested name as the placeholder. Leaving it blank keeps that
+    // suggestion, so naming is optional rather than a form to dismiss.
+    const name =
+      actions.naming === c.id
+        ? newlyKeptName(c, nameStyle, actions)
+        : editableName(c.name, nameStyle, (next) =>
+            actions.onRenameColour(c.id, next),
+          );
 
     const node = el(
       "div",
@@ -282,17 +329,23 @@ export function renderColours(
   paint(query);
 
   return el("div", { style: "display:flex;flex-direction:column;gap:12px" }, [
-    libraryBar("LIBRARY : COLOURS", colours.length),
-    renderFilters(actions.facets, actions.sort, {
+    renderLibraryBar(
+      "COLOURS LIBRARY",
+      colours.length,
+      query,
+      "Search colours",
+      {
+        complete: (q) => completionFor(q, names),
+        onQuery: (q) => {
+          paint(q);
+          search.onQuery(q);
+        },
+      },
+    ),
+    renderFilters("colours", actions.facets, actions.sort, {
       onToggle: actions.onToggleFacet,
       onSort: actions.onSort,
-    }),
-    renderSearchBar(query, "Search colours", {
-      complete: (q) => completionFor(q, names),
-      onQuery: (q) => {
-        paint(q);
-        search.onQuery(q);
-      },
+      onClearFacets: actions.onClearFacets,
     }),
     results,
   ]);

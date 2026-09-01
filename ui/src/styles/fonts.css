@@ -8,12 +8,24 @@
   font-display: block;
 }
 
+/*
+ * Sora runs bigger than Karla at the same `font-size`: measured against the
+ * two source faces, its x-height is 11.7% larger, its cap height 16.2%, and
+ * its line box 7.8%. Switching themes therefore resized every piece of text in
+ * the window and moved everything text had sized — which is the jitter.
+ *
+ * `size-adjust` scales the outlines so the two agree. 89.5% is Karla's
+ * x-height over Sora's (478/534), the measure that governs how big text looks.
+ * The faces still have different proportions, so a letter here and there lands
+ * a fraction differently; the wholesale change of size does not.
+ */
 @font-face {
   font-family: "Sora";
   src: url("/fonts/sora-400-600.woff2") format("woff2-variations");
   font-weight: 400 600;
   font-style: normal;
   font-display: block;
+  size-adjust: 89.5%;
 }
 
 @font-face {

@@ -19,4 +19,4 @@ pub mod protocol;
 pub mod transport;
 
 pub use codec::{Error, Result, read_message, write_message};
-pub use protocol::{PickOptions, Request, Response};
+pub use protocol::{LoupeKeys, PaletteRequest, PickOptions, Request, Response, TakenColour};

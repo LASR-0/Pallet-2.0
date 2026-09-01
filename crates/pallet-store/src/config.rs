@@ -119,6 +119,51 @@ impl Default for ColorSettings {
     }
 }
 
+/// Key bindings.
+///
+/// Two kinds live here. The first four fire while the Pallet window has focus.
+/// The last three are read by the picker and fire while the loupe is up, which
+/// is a separate process with its own keyboard grab.
+///
+/// `picker.shortcut` is deliberately *not* here: no Wayland client can grab a
+/// key globally, so that one is a note to the user about what to put in their
+/// compositor config, not something Pallet can honour.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Keys {
+    /// Start a pick from the window.
+    pub pick: String,
+    /// Switch between the two themes.
+    pub theme: String,
+    /// Focus the library search field.
+    pub search: String,
+    /// Save the palette being built.
+    pub save_palette: String,
+    /// Keep the colour on the Current screen in the library.
+    pub save_colour: String,
+    /// Take the colour under the loupe.
+    pub loupe_commit: String,
+    /// Take it and keep it in the library.
+    pub loupe_save: String,
+    /// Abandon the pick.
+    pub loupe_cancel: String,
+}
+
+impl Default for Keys {
+    fn default() -> Self {
+        Self {
+            pick: "CTRL+SHIFT+P".into(),
+            theme: "T".into(),
+            search: "/".into(),
+            save_palette: "CTRL+S".into(),
+            save_colour: "CTRL+D".into(),
+            loupe_commit: "Return".into(),
+            loupe_save: "S".into(),
+            loupe_cancel: "Escape".into(),
+        }
+    }
+}
+
 /// The whole settings file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(default)]
@@ -129,6 +174,8 @@ pub struct Config {
     pub picker: Picker,
     /// Colour maths preferences.
     pub color: ColorSettings,
+    /// Key bindings.
+    pub keys: Keys,
 }
 
 /// The result of loading settings: always a usable config, plus any complaints.
@@ -193,6 +240,7 @@ impl Config {
                     salvage(&mut config.general, &table, "general", &mut warnings);
                     salvage(&mut config.picker, &table, "picker", &mut warnings);
                     salvage(&mut config.color, &table, "color", &mut warnings);
+                    salvage(&mut config.keys, &table, "keys", &mut warnings);
                 } else {
                     warnings.push("the file is not valid TOML; using defaults".into());
                 }
