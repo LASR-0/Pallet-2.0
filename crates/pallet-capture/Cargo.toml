@@ -21,5 +21,20 @@ memmap2.workspace = true
 rustix.workspace = true
 x11rb.workspace = true
 
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+    # `DXGI_OUTPUT_DESC` itself needs this, not just `Monitor`'s consumers of
+    # it — declared directly rather than relying on a sibling crate to pull
+    # it in through feature unification, which is what masked its absence
+    # here until this crate was ever built on its own.
+    "Win32_Graphics_Gdi",
+    "Win32_UI_HiDpi",
+] }
+
 [lints]
 workspace = true

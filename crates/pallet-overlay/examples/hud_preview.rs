@@ -131,7 +131,7 @@ fn main() {
         .expect("render");
 
     let mut rgb = Vec::with_capacity(WIDTH as usize * HEIGHT as usize * 3);
-    for chunk in pixels.chunks_exact(4) {
+    for chunk in pixels.as_chunks::<4>().0 {
         rgb.extend_from_slice(&chunk[..3]);
     }
     image::save_buffer(&path, &rgb, WIDTH, HEIGHT, image::ColorType::Rgb8).expect("write png");

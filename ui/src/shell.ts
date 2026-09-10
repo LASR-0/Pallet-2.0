@@ -31,8 +31,9 @@ function titleBar(actions: { onMinimise: () => void; onClose: () => void }) {
   return el(
     "div",
     {
-      // `data-tauri-drag-region` makes the bar drag the window, which the
-      // prototype could not express but a real window needs.
+      // Makes the bar drag the window, which the prototype could not express
+      // but a real window needs.
+      dragRegion: true,
       style:
         "display:flex;align-items:center;gap:10px;height:40px;flex:none;" +
         // No right padding: the window buttons run to the edge, so their hover

@@ -118,6 +118,13 @@ enum Command {
 
 fn main() -> Result<()> {
     logging::init("info");
+
+    // Must happen before anything reads a monitor rect or a cursor position:
+    // an unaware process gets those DPI-virtualised from GDI and User32,
+    // which would silently disagree with DXGI's always-physical coordinates.
+    #[cfg(windows)]
+    pallet_capture::windows::dpi::ensure_aware();
+
     let cli = Cli::parse();
 
     match cli.command {
@@ -162,10 +169,19 @@ fn main() -> Result<()> {
         }
         Command::ClipboardHold { text } => {
             // Blocks until another application takes the clipboard, then
-            // exits. This is the whole job of this process.
-            use arboard::SetExtLinux as _;
-            let mut clipboard = arboard::Clipboard::new()?;
-            clipboard.set().wait().text(text)?;
+            // exits. This is the whole job of this process. Only reachable on
+            // a platform whose clipboard needs a live holder in the first
+            // place; see `copy_to_clipboard`.
+            #[cfg(unix)]
+            {
+                use arboard::SetExtLinux as _;
+                let mut clipboard = arboard::Clipboard::new()?;
+                clipboard.set().wait().text(text)?;
+            }
+            #[cfg(not(unix))]
+            {
+                arboard::Clipboard::new()?.set_text(text)?;
+            }
         }
         Command::Export {
             palette,
@@ -266,10 +282,17 @@ fn main() -> Result<()> {
                 },
             }
 
+            let picker_binary = binary.replace("pallet", "pallet-picker");
             println!();
             println!("Start the resident picker at login so picks are instant:");
             println!();
-            println!("    {} &", binary.replace("pallet", "pallet-picker"));
+            if cfg!(windows) {
+                println!("    {picker_binary}");
+                println!();
+                println!("    (add a shortcut to it in shell:startup to run it every login)");
+            } else {
+                println!("    {picker_binary} &");
+            }
         }
         Command::Status => {
             match ping() {
@@ -540,7 +563,7 @@ fn print_current(color: Color, space: Space) {
 /// Returns `None` when no picker is reachable, so the caller can fall back to
 /// doing the work itself rather than failing.
 fn ask_picker(options: &pallet_ipc::PickOptions) -> Option<Response> {
-    let mut stream = std::os::unix::net::UnixStream::connect(transport::socket_path()).ok()?;
+    let mut stream = transport::Stream::connect().ok()?;
     write_message(&mut stream, &Request::Pick(options.clone())).ok()?;
     // No read timeout: a pick lasts exactly as long as the user takes.
     read_message(&mut stream).ok()
@@ -553,11 +576,10 @@ fn ask_picker(options: &pallet_ipc::PickOptions) -> Option<Response> {
 /// it; without a deadline `pallet status` would block until the user finished
 /// picking, which is not what "status" should ever do.
 fn ping() -> Option<String> {
-    let stream = std::os::unix::net::UnixStream::connect(transport::socket_path()).ok()?;
+    let mut stream = transport::Stream::connect().ok()?;
     stream
         .set_read_timeout(Some(std::time::Duration::from_millis(500)))
         .ok()?;
-    let mut stream = stream;
     write_message(&mut stream, &Request::Ping).ok()?;
     match read_message(&mut stream).ok()? {
         Response::Pong { version, .. } => Some(version),
@@ -623,9 +645,13 @@ fn pick_in_process(options: &pallet_ipc::PickOptions) -> Result<Response> {
 /// Setting it and returning therefore does nothing at all for a command-line
 /// tool, which was the first thing this did and it silently failed.
 ///
-/// So the work is handed to a detached copy of this binary that blocks until
-/// something else takes the clipboard, then exits. This is what `wl-copy` does
-/// for the same reason.
+/// So on those platforms the work is handed to a detached copy of this binary
+/// that blocks until something else takes the clipboard, then exits — what
+/// `wl-copy` does for the same reason. Windows' clipboard is owned by the OS
+/// rather than by whichever process last wrote it, so the text is simply
+/// there once set; spawning a holder that immediately has nothing to wait for
+/// would just flash an extra process for no reason.
+#[cfg(unix)]
 fn copy_to_clipboard(text: &str) -> Result<()> {
     let exe = std::env::current_exe().context("locating this binary")?;
     std::process::Command::new(exe)
@@ -636,5 +662,12 @@ fn copy_to_clipboard(text: &str) -> Result<()> {
         .stderr(std::process::Stdio::null())
         .spawn()
         .context("spawning the clipboard holder")?;
+    Ok(())
+}
+
+/// See the Unix [`copy_to_clipboard`].
+#[cfg(not(unix))]
+fn copy_to_clipboard(text: &str) -> Result<()> {
+    arboard::Clipboard::new()?.set_text(text)?;
     Ok(())
 }

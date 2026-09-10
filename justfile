@@ -27,3 +27,12 @@ paths:
 # Run against a throwaway data directory instead of your real library.
 sandbox *ARGS:
     PALLET_HOME=.pallet-home cargo run -q -p pallet-cli -- {{ARGS}}
+
+# Run the app against a live, hot-reloading frontend.
+#
+# `pnpm tauri dev` alone won't do this: the Tauri CLI has to be invoked from
+# apps/pallet-app itself (that's where tauri.conf.json and Cargo.toml live),
+# not from ui/ where the CLI package is installed, or it can't find the app
+# at all — hence reaching across into ui/node_modules instead.
+dev:
+    cd apps/pallet-app && node ../../ui/node_modules/@tauri-apps/cli/tauri.js dev

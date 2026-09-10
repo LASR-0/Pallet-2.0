@@ -15,7 +15,7 @@
 pub mod codec;
 pub mod protocol;
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub mod transport;
 
 pub use codec::{Error, Result, read_message, write_message};

@@ -13,11 +13,14 @@
 
 pub mod error;
 pub mod hud;
+pub mod keys;
 
 #[cfg(target_os = "linux")]
 pub mod linux;
 pub mod render;
 pub mod session;
+#[cfg(target_os = "windows")]
+pub mod windows;
 
 pub use error::{Error, Result};
 
@@ -25,11 +28,19 @@ pub use error::{Error, Result};
 /// picks so no pick pays the ~220 ms of GPU initialisation.
 #[cfg(target_os = "linux")]
 pub type Context = linux::PickerContext;
+/// See the Linux [`Context`].
+#[cfg(target_os = "windows")]
+pub type Context = windows::PickerContext;
 
 /// Build a reusable picking context. Do this once, at start-up.
 #[cfg(target_os = "linux")]
 pub fn context() -> Result<Context> {
     linux::PickerContext::new()
+}
+/// See the Linux [`context`].
+#[cfg(target_os = "windows")]
+pub fn context() -> Result<Context> {
+    windows::PickerContext::new()
 }
 
 /// A palette to gather in one pass.
@@ -67,11 +78,22 @@ pub fn run(
 ) -> Result<session::Outcome> {
     linux::run_picker_with(context, capture, zoom, average_size, keys, palette)
 }
+/// See the Linux [`run`].
+#[cfg(target_os = "windows")]
+pub fn run(
+    context: &Context,
+    capture: pallet_capture::Capture,
+    zoom: u32,
+    average_size: u32,
+    keys: LoupeKeys,
+    palette: Option<Palette>,
+) -> Result<session::Outcome> {
+    windows::run_picker_with(context, capture, zoom, average_size, keys, palette)
+}
 
 pub use hud::chrome::Tray;
 /// The keys the loupe answers to.
-#[cfg(target_os = "linux")]
-pub use linux::layer::LoupeKeys;
+pub use keys::LoupeKeys;
 pub use render::{ChromeGpu, LoupeView, Renderer, Screen};
 pub use session::Taken;
 pub use session::{Input, Outcome, Session};

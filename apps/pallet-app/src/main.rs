@@ -107,7 +107,7 @@ fn settings(state: tauri::State<'_, AppState>) -> Result<Vec<SettingRow>, String
         row(
             "shortcut",
             "Global pick shortcut",
-            "Your compositor owns this — run `pallet hotkey`",
+            "Bound outside Pallet — run `pallet hotkey`",
             c.picker.shortcut.clone(),
             false,
             false,
@@ -597,16 +597,20 @@ const MAX_PALETTE: usize = 25;
 /// implementation detail of how picking is made fast — not something a user
 /// should have to know about or launch. Without this, the Build screen's
 /// primary action fails with an error telling them to go run a daemon.
-#[cfg(unix)]
-fn connect_to_picker() -> Result<std::os::unix::net::UnixStream, String> {
-    use std::os::unix::net::UnixStream;
+fn connect_to_picker() -> Result<pallet_ipc::transport::Stream, String> {
+    use pallet_ipc::transport::Stream;
 
     // Beside this binary, so a build tree and an installed bundle both work.
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let picker_name = if cfg!(windows) {
+        "pallet-picker.exe"
+    } else {
+        "pallet-picker"
+    };
     let picker = exe
         .parent()
         .ok_or("could not locate the picker binary")?
-        .join("pallet-picker");
+        .join(picker_name);
     if !picker.exists() {
         return Err(format!("the picker is missing from {}", picker.display()));
     }
@@ -615,10 +619,9 @@ fn connect_to_picker() -> Result<std::os::unix::net::UnixStream, String> {
     // one that carries the pick. The picker serves a single connection at a
     // time, so holding one open while opening a second deadlocks: the second
     // is never accepted, and the request on it is never read.
-    match probe_picker(&pallet_ipc::transport::socket_path(), &picker) {
+    match probe_picker(&picker) {
         Probe::Usable => {
-            return UnixStream::connect(pallet_ipc::transport::socket_path())
-                .map_err(|e| format!("could not reach the picker: {e}"));
+            return Stream::connect().map_err(|e| format!("could not reach the picker: {e}"));
         }
         // The picker outlives rebuilds, so a running one may predate the
         // binary now on disk and would answer with the previous version's
@@ -626,7 +629,7 @@ fn connect_to_picker() -> Result<std::os::unix::net::UnixStream, String> {
         // afternoon wondering why a change had no effect.
         Probe::Stale => {
             tracing::info!("the running picker is from an older build; restarting it");
-            retire_picker(&pallet_ipc::transport::socket_path());
+            retire_picker();
         }
         Probe::Absent => {}
     }
@@ -642,9 +645,8 @@ fn connect_to_picker() -> Result<std::os::unix::net::UnixStream, String> {
     // It builds a GPU context before it listens, which measured about 190 ms.
     // Poll rather than sleep a fixed time so a fast machine is not penalised
     // and a slow one still succeeds.
-    let socket = pallet_ipc::transport::socket_path();
     for _ in 0..100 {
-        if let Ok(stream) = UnixStream::connect(&socket) {
+        if let Ok(stream) = Stream::connect() {
             return Ok(stream);
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
@@ -654,7 +656,6 @@ fn connect_to_picker() -> Result<std::os::unix::net::UnixStream, String> {
 }
 
 /// What a probe of the picker's socket found.
-#[cfg(unix)]
 enum Probe {
     /// Nothing is listening.
     Absent,
@@ -665,9 +666,8 @@ enum Probe {
 }
 
 /// Ask the running picker what build it is, on a connection of its own.
-#[cfg(unix)]
-fn probe_picker(socket: &std::path::Path, binary: &std::path::Path) -> Probe {
-    let Ok(mut stream) = std::os::unix::net::UnixStream::connect(socket) else {
+fn probe_picker(binary: &std::path::Path) -> Probe {
+    let Ok(mut stream) = pallet_ipc::transport::Stream::connect() else {
         return Probe::Absent;
     };
     // A wedged picker must not hang the window; treat silence as usable and
@@ -695,15 +695,14 @@ fn probe_picker(socket: &std::path::Path, binary: &std::path::Path) -> Probe {
 }
 
 /// Ask the running picker to exit, and wait for its socket to go quiet.
-#[cfg(unix)]
-fn retire_picker(socket: &std::path::Path) {
-    if let Ok(mut stream) = std::os::unix::net::UnixStream::connect(socket) {
+fn retire_picker() {
+    if let Ok(mut stream) = pallet_ipc::transport::Stream::connect() {
         let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(2)));
         let _ = pallet_ipc::write_message(&mut stream, &pallet_ipc::Request::Shutdown);
         let _ = pallet_ipc::read_message::<_, pallet_ipc::Response>(&mut stream);
     }
     for _ in 0..40 {
-        if std::os::unix::net::UnixStream::connect(socket).is_err() {
+        if pallet_ipc::transport::Stream::connect().is_err() {
             return;
         }
         std::thread::sleep(std::time::Duration::from_millis(50));

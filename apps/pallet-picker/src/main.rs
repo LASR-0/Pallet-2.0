@@ -9,9 +9,6 @@
 //! One request is served at a time: the overlay grabs the keyboard exclusively,
 //! so two concurrent picks are not a thing that can meaningfully happen.
 
-use std::io::ErrorKind;
-use std::os::unix::net::{UnixListener, UnixStream};
-
 use anyhow::{Context as _, Result};
 use pallet_core::logging;
 use pallet_ipc::{Request, Response, read_message, transport, write_message};
@@ -19,24 +16,21 @@ use pallet_ipc::{Request, Response, read_message, transport, write_message};
 fn main() -> Result<()> {
     logging::init("info");
 
-    let socket = transport::ensure_socket_dir().context("preparing the socket directory")?;
+    // Must happen before anything reads a monitor rect or a cursor position:
+    // an unaware process gets those DPI-virtualised from GDI and User32,
+    // which would silently disagree with DXGI's always-physical coordinates.
+    #[cfg(windows)]
+    pallet_capture::windows::dpi::ensure_aware();
 
-    // A socket file left behind by a crash would otherwise block binding
-    // forever. Only remove it if nothing is listening, so a running picker is
-    // never displaced by a second one starting.
-    if socket.exists() {
-        match UnixStream::connect(&socket) {
-            Ok(_) => anyhow::bail!("a picker is already running at {}", socket.display()),
-            Err(e) if e.kind() == ErrorKind::ConnectionRefused => {
-                tracing::info!("removing a stale socket from a previous run");
-                std::fs::remove_file(&socket).context("removing the stale socket")?;
-            }
-            Err(e) => return Err(e).context("probing the existing socket"),
+    let listener = match transport::Listener::bind() {
+        Ok(listener) => listener,
+        Err(transport::BindError::AlreadyRunning(path)) => {
+            anyhow::bail!("a picker is already running at {}", path.display());
         }
-    }
-
-    let listener =
-        UnixListener::bind(&socket).with_context(|| format!("binding {}", socket.display()))?;
+        Err(transport::BindError::Io(e)) => {
+            return Err(e).context("binding the picker's socket");
+        }
+    };
 
     // The expensive part, paid once.
     let started = std::time::Instant::now();
@@ -92,9 +86,8 @@ fn main() -> Result<()> {
         }
     }
 
-    // The socket is ours; leaving it behind would make the next start think a
-    // picker is running.
-    let _ = std::fs::remove_file(&socket);
+    // `listener`'s `Drop` releases the socket or pipe on every exit path,
+    // including the `break` above.
     Ok(())
 }
 

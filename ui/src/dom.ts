@@ -19,6 +19,15 @@ type Attrs = {
   title?: string;
   onClick?: () => void;
   text?: string;
+  /**
+   * Marks the element as a window-drag handle.
+   *
+   * Only the exact element carrying this survives to Tauri's drag listener —
+   * a mousedown on a child button inside it (the title bar's minimise/close)
+   * never reaches the attribute, so those stay clickable rather than also
+   * dragging the window.
+   */
+  dragRegion?: boolean;
 };
 
 export function el(
@@ -30,6 +39,7 @@ export function el(
   if (attrs.style) node.setAttribute("style", attrs.style);
   if (attrs.class) node.className = attrs.class;
   if (attrs.title) node.dataset.tip = attrs.title;
+  if (attrs.dragRegion) node.setAttribute("data-tauri-drag-region", "");
   if (attrs.text !== undefined) node.textContent = attrs.text;
   if (attrs.onClick) {
     const handler = attrs.onClick;

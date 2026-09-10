@@ -9,6 +9,11 @@
 //! to put in their compositor config, binding `pallet pick`. That is the
 //! idiomatic arrangement on Wayland, works everywhere without a portal, and
 //! makes the same entry point available to scripts.
+//!
+//! Windows has no such restriction — `RegisterHotKey` would work fine — but
+//! Pallet stays consistent rather than adding a second binding mechanism for
+//! one platform: the same manual arrangement applies, using the "Shortcut
+//! key" field Windows already keeps on every desktop `.lnk` shortcut.
 
 #![warn(missing_docs)]
 
@@ -25,6 +30,9 @@ pub enum Compositor {
     Gnome,
     /// KDE Plasma.
     Kde,
+    /// Windows. Has no compositor config file at all, but the desktop's own
+    /// per-shortcut "Shortcut key" field plays the same role.
+    Windows,
     /// Something else, named as the desktop reported itself.
     Other(String),
     /// Nothing identified the session.
@@ -34,6 +42,10 @@ pub enum Compositor {
 impl Compositor {
     /// Identify the current session from the environment.
     pub fn detect() -> Self {
+        if cfg!(target_os = "windows") {
+            return Self::Windows;
+        }
+
         let desktop = std::env::var("XDG_CURRENT_DESKTOP")
             .or_else(|_| std::env::var("XDG_SESSION_DESKTOP"))
             .unwrap_or_default();
@@ -95,6 +107,10 @@ impl Compositor {
             Self::Kde => Some(
                 "System Settings > Shortcuts > Add Command, then add a shortcut running \
                  the command below.",
+            ),
+            Self::Windows => Some(
+                "Create a desktop shortcut to pallet.exe, open its Properties, and set \
+                 \"Shortcut key\" to the combination below.",
             ),
             _ => None,
         }
@@ -209,7 +225,7 @@ mod tests {
 
     #[test]
     fn environments_configured_through_a_ui_get_guidance_not_a_line() {
-        for c in [Compositor::Gnome, Compositor::Kde] {
+        for c in [Compositor::Gnome, Compositor::Kde, Compositor::Windows] {
             assert!(c.bind_line("CTRL+SHIFT+P", "pallet pick").is_none());
             assert!(c.manual_hint().is_some(), "{c:?} should explain itself");
         }

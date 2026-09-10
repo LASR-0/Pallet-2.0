@@ -129,9 +129,12 @@ impl Renderer {
         }))
         .map_err(|e| Error::NoGpu(e.to_string()))?;
 
+        // `downlevel_defaults()` caps texture dimensions at 2048px, which
+        // any monitor at 4K or wider already exceeds; the adapter's own
+        // limits are whatever this GPU actually supports.
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("pallet-overlay"),
-            required_limits: wgpu::Limits::downlevel_defaults(),
+            required_limits: adapter.limits(),
             memory_hints: wgpu::MemoryHints::Performance,
             ..Default::default()
         }))

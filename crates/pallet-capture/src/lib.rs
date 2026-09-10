@@ -20,6 +20,9 @@ pub mod monitor;
 #[cfg(target_os = "linux")]
 pub mod linux;
 
+#[cfg(target_os = "windows")]
+pub mod windows;
+
 pub use error::{Error, Result};
 pub use frame::{Capture, Frame, PixelFormat};
 pub use monitor::{ColorProfile, Monitor, Transform};
@@ -68,7 +71,12 @@ pub fn open() -> Result<Box<dyn ScreenCapture>> {
         linux::open()
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "windows")]
+    {
+        windows::open()
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     {
         Err(Error::NoBackend(format!(
             "{} support lands in a later milestone",
