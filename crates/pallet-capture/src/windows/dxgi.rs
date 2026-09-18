@@ -133,6 +133,14 @@ fn capture_index(capture: &mut DxgiCapture, index: usize) -> Result<Frame> {
         Ok(frame) => Ok(frame),
         Err(Error::Refused(_)) => {
             let id = capture.targets[index].monitor.id.clone();
+            // Dropped before re-enumerating, not just replaced: DXGI allows
+            // only one duplication interface per output at a time, and
+            // `enumerate_targets` re-running while these old handles are
+            // still alive makes it lose exactly the race it exists to
+            // recover from — `DuplicateOutput` fails with "the parameter is
+            // incorrect" against this same process's own still-open
+            // session, silently dropping that output from the new list.
+            capture.targets.clear();
             capture.targets = enumerate_targets()?;
             let target = capture.target_mut(&id)?;
             capture_from(target)

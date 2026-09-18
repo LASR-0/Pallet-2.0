@@ -18,16 +18,20 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use pallet_capture::Capture;
-use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MONITORINFOEXW};
+use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+use windows::Win32::Foundation::{COLORREF, HWND};
+use windows::Win32::Graphics::Dwm::DwmFlush;
+use windows::Win32::UI::WindowsAndMessaging::{
+    GWL_EXSTYLE, GetWindowLongW, LWA_ALPHA, SetLayeredWindowAttributes, SetWindowLongW,
+    WS_EX_LAYERED,
+};
 use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{Key, NamedKey};
-use winit::monitor::MonitorHandle;
 use winit::platform::run_on_demand::EventLoopExtRunOnDemand;
-use winit::platform::windows::MonitorHandleExtWindows;
-use winit::window::{Fullscreen, Window, WindowId, WindowLevel};
+use winit::window::{Window, WindowId, WindowLevel};
 
 use crate::Palette;
 use crate::error::{Error, Result};
@@ -59,38 +63,42 @@ fn binds(event: &winit::event::KeyEvent, binding: &str) -> bool {
     name_binds(&key_name(event), binding)
 }
 
-/// The `\\.\DISPLAY1`-style device name behind a `winit` monitor handle.
-///
-/// Matched against [`pallet_capture::Monitor::id`], which DXGI derives from
-/// the same GDI device name — the only identifier both sides of this crate's
-/// platform split agree on. Comparing geometry instead is the tempting
-/// shortcut, and the wrong one: a mismatch there — DPI rounding, a rotated
-/// panel, whichever side samples first during a mode change — silently
-/// hands one monitor's frozen pixels to another monitor's window rather than
-/// failing loudly.
-fn device_name(handle: &MonitorHandle) -> Option<String> {
-    let mut info = MONITORINFOEXW {
-        monitorInfo: windows::Win32::Graphics::Gdi::MONITORINFO {
-            cbSize: std::mem::size_of::<MONITORINFOEXW>() as u32,
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-
-    let hmonitor = windows::Win32::Graphics::Gdi::HMONITOR(handle.hmonitor() as *mut _);
-    // SAFETY: `info` is sized and zeroed per `GetMonitorInfoW`'s contract,
-    // and `hmonitor` came from `winit`'s own enumeration, so it names a
-    // monitor that exists for the duration of this call.
-    if !unsafe { GetMonitorInfoW(hmonitor, &mut info.monitorInfo) }.as_bool() {
-        return None;
+/// The raw `HWND` behind a `winit` window, for the Win32 calls `winit`
+/// doesn't expose a safe wrapper for.
+fn hwnd_of(window: &Window) -> Option<HWND> {
+    match window.window_handle().ok()?.as_raw() {
+        RawWindowHandle::Win32(handle) => Some(HWND(handle.hwnd.get() as *mut _)),
+        _ => None,
     }
+}
 
-    let len = info
-        .szDevice
-        .iter()
-        .position(|&c| c == 0)
-        .unwrap_or(info.szDevice.len());
-    Some(String::from_utf16_lossy(&info.szDevice[..len]))
+/// Make a window fully transparent without touching `WS_VISIBLE`.
+///
+/// A window has to keep receiving `WM_PAINT` for `winit` to ever deliver
+/// `RedrawRequested` — Win32 simply never paints a window created (or later
+/// made) invisible, so hiding it the obvious way (`Window::set_visible`)
+/// would freeze the overlay forever, one render short of ever showing
+/// itself. A layered window sidesteps that: it stays visible and paintable,
+/// but composites as fully transparent, so nothing appears on screen until
+/// [`reveal`] flips it opaque once the frozen desktop is actually on it.
+fn hide_via_transparency(window: &Window) {
+    let Some(hwnd) = hwnd_of(window) else { return };
+    // SAFETY: `hwnd` is a live top-level window owned by this process for as
+    // long as `window` is alive.
+    unsafe {
+        let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE);
+        SetWindowLongW(hwnd, GWL_EXSTYLE, ex_style | WS_EX_LAYERED.0 as i32);
+        let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 0, LWA_ALPHA);
+    }
+}
+
+/// Undo [`hide_via_transparency`], snapping the window to fully opaque.
+fn reveal(window: &Window) {
+    let Some(hwnd) = hwnd_of(window) else { return };
+    // SAFETY: same as `hide_via_transparency`.
+    unsafe {
+        let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 255, LWA_ALPHA);
+    }
 }
 
 /// A warm picker: an event loop and a live GPU device, kept between picks.
@@ -199,6 +207,21 @@ struct Overlay {
     configured: bool,
     width: u32,
     height: u32,
+    /// Whether the window has been revealed yet. Kept transparent until its
+    /// first frame is presented so Windows never composites a blank default
+    /// frame while the surface is still being configured.
+    shown: bool,
+    /// Set whenever this overlay is asked to redraw, cleared only once a
+    /// frame is actually presented. `request_redraw` alone is fire-and-
+    /// forget: a monitor the pointer never crosses gets exactly one
+    /// `RedrawRequested`, from the initial `mark_dirty` in `resumed`, and if
+    /// that one skips a frame (`get_current_texture` returning anything but
+    /// success) nothing ever asks it to try again — it was one bad frame
+    /// away from staying stuck forever, rescued only by whichever monitor
+    /// happens to be under the cursor getting a continuous, self-healing
+    /// stream of redraws from `CursorMoved`. This flag makes every overlay
+    /// get that same persistent retry, driven from `about_to_wait`.
+    needs_redraw: bool,
 }
 
 /// The running picker, driven by `winit`'s event loop for one pick.
@@ -231,24 +254,30 @@ impl PickerApp<'_> {
         self.window_index.get(&id).copied()
     }
 
-    fn mark_dirty(&self, index: usize) {
-        if let Some(overlay) = self.overlays.get(index) {
+    fn mark_dirty(&mut self, index: usize) {
+        if let Some(overlay) = self.overlays.get_mut(index) {
+            overlay.needs_redraw = true;
             overlay.window.request_redraw();
         }
     }
 
-    fn mark_all_dirty(&self) {
+    fn mark_all_dirty(&mut self) {
         for index in 0..self.overlays.len() {
             self.mark_dirty(index);
         }
     }
 
-    /// The cursor in one overlay's physical pixels, if it is on that monitor.
+    /// The cursor in one overlay's *displayed* pixels, if it is on that
+    /// monitor.
+    ///
+    /// Displayed rather than raw-framebuffer coordinates because this positions
+    /// the loupe and the HUD on a surface that is itself in the desktop's
+    /// rotated layout; the two only coincide on an unrotated display.
     fn local_cursor(&self, index: usize) -> Option<(u32, u32)> {
         let overlay = self.overlays.get(index)?;
         let frame = self.session.capture().frames.get(overlay.frame_index)?;
         let (x, y) = self.session.cursor();
-        frame.monitor.to_pixel(x, y)
+        frame.monitor.to_displayed(x, y)
     }
 
     fn configure_surface(&mut self, index: usize, width: u32, height: u32) {
@@ -354,6 +383,49 @@ impl PickerApp<'_> {
             self.renderer.draw(&overlay.screen, &target, view);
         }
         self.renderer.queue().present(frame);
+        // A frame actually made it to the surface — the one thing that
+        // earns clearing this. See `Overlay::needs_redraw`: the skipped-
+        // frame paths above return before reaching this line on purpose, so
+        // a failed attempt stays flagged and `about_to_wait` retries it
+        // instead of the overlay being stuck with whatever it last managed
+        // to show, correct or not.
+        self.overlays[index].needs_redraw = false;
+
+        // Only revealed now, after the frozen desktop is actually on the
+        // surface — revealing it any earlier let Windows composite a blank
+        // default frame for the gap between window creation and this point.
+        if !self.overlays[index].shown {
+            self.overlays[index].shown = true;
+            // `present` only *submits* this frame; DWM can still be a
+            // composition pass behind, so revealing right away sometimes
+            // showed a blank default frame for the gap between window
+            // creation and this point. One `DwmFlush` closes that gap on a
+            // picker's first reveal reliably.
+            let _ = unsafe { DwmFlush() };
+            reveal(&self.overlays[index].window);
+            // Focus couldn't usefully land on a window nobody can see;
+            // give it here instead, on the same window `resumed` picked.
+            //
+            // Every overlay gets touched, not just the first — an
+            // experiment for the still-open "away monitor renders stale or
+            // torn on every pick after this picker's first" bug (see
+            // `Overlay::needs_redraw`, which did not fix it: `present`
+            // seems to be succeeding, so the frame is not what's missing —
+            // DWM's composite of it is). One candidate left: Windows can
+            // recycle an HWND value moments after the previous pick's
+            // window using it is destroyed, and if DWM keeps any
+            // per-HWND composition state keyed on that value, an overlay
+            // that never receives an activation message has no reason to
+            // shed a stale one. `focus_window` sends exactly that message;
+            // handing focus straight back to overlay 0 afterward keeps the
+            // actual input-focus outcome the same as before this existed.
+            self.overlays[index].window.focus_window();
+            if index != 0
+                && let Some(first) = self.overlays.first()
+            {
+                first.window.focus_window();
+            }
+        }
     }
 
     /// Take a key press and turn it into a session input, the same table the
@@ -391,47 +463,39 @@ impl ApplicationHandler for PickerApp<'_> {
         }
         self.windows_created = true;
 
-        let monitors: Vec<(MonitorHandle, Option<String>)> = event_loop
-            .available_monitors()
-            .map(|h| {
-                let name = device_name(&h);
-                (h, name)
-            })
-            .collect();
         let frames: Vec<_> = self.session.capture().frames.to_vec();
 
         for (frame_index, frame) in frames.iter().enumerate() {
             let m = &frame.monitor;
-            let handle = monitors
-                .iter()
-                .find(|(_, name)| name.as_deref() == Some(m.id.as_str()))
-                .map(|(h, _)| h);
 
-            let mut attrs = Window::default_attributes()
+            // Positioned and sized by geometry rather than through
+            // `Fullscreen::Borderless`: entering borderless fullscreen on a
+            // monitor that isn't the one currently under the cursor is a
+            // known Windows quirk where the OS defers the transition until
+            // that monitor gets some input, which is exactly the "second
+            // monitor needs to be hovered before it appears" symptom. A
+            // plain top-level window sized to the monitor's own rect sidesteps
+            // that negotiation (and its transition animation) entirely.
+            //
+            // `logical_x/y/width/height` are the desktop's upright layout —
+            // 1440x2560 for a portrait monitor — which is what a window on
+            // screen needs; `pixel_width/height` is the *raw* framebuffer
+            // behind the rotation (2560x1440 for that same monitor) and
+            // would size the window sideways.
+            //
+            // Created visible, then made transparent (not hidden) right
+            // below — see `hide_via_transparency` for why an actually
+            // hidden window would never be able to show itself again.
+            let attrs = Window::default_attributes()
                 .with_title("Pallet")
                 .with_decorations(false)
                 .with_resizable(false)
-                .with_visible(true);
-            attrs = match handle {
-                Some(h) => attrs.with_fullscreen(Some(Fullscreen::Borderless(Some(h.clone())))),
-                // A monitor DXGI captured but `winit` cannot find by device
-                // name is placed by geometry instead of giving up on it
-                // entirely — degraded, since a manually sized and positioned
-                // window skips whatever `Fullscreen::Borderless` does to
-                // guarantee full monitor coverage, but still usable.
-                None => {
-                    tracing::warn!(
-                        monitor = %m.id,
-                        "winit did not report this display; placing its overlay by geometry"
-                    );
-                    attrs
-                        .with_position(PhysicalPosition::new(m.logical_x, m.logical_y))
-                        .with_inner_size(PhysicalSize::new(
-                            m.pixel_width.max(1),
-                            m.pixel_height.max(1),
-                        ))
-                }
-            };
+                .with_visible(true)
+                .with_position(PhysicalPosition::new(m.logical_x, m.logical_y))
+                .with_inner_size(PhysicalSize::new(
+                    m.logical_width.max(1),
+                    m.logical_height.max(1),
+                ));
 
             let window = match event_loop.create_window(attrs) {
                 Ok(w) => Arc::new(w),
@@ -441,6 +505,7 @@ impl ApplicationHandler for PickerApp<'_> {
                 }
             };
             window.set_window_level(WindowLevel::AlwaysOnTop);
+            hide_via_transparency(&window);
 
             let surface = match self.context.instance.create_surface(Arc::clone(&window)) {
                 Ok(s) => s,
@@ -468,20 +533,17 @@ impl ApplicationHandler for PickerApp<'_> {
                 configured: false,
                 width: 0,
                 height: 0,
+                shown: false,
+                needs_redraw: true,
             });
             let index = self.overlays.len() - 1;
             self.configure_surface(index, size.width, size.height);
-            // `winit` does not promise an initial `RedrawRequested` just
-            // because a window was created visible — without asking
-            // explicitly, a monitor the pointer never happens to cross stays
-            // black until something else on it triggers a redraw.
+            // `winit` does not promise an initial `RedrawRequested` on its
+            // own, and the window stays transparent (and unfocused, see
+            // `redraw`) until one lands — without asking explicitly, a
+            // monitor the pointer never happens to cross would never reveal
+            // its overlay.
             self.mark_dirty(index);
-        }
-
-        // The first pointer event corrects the seeded cursor; focus must land
-        // somewhere before that happens so the very first key press works.
-        if let Some(first) = self.overlays.first() {
-            first.window.focus_window();
         }
 
         tracing::info!(
@@ -615,6 +677,18 @@ impl ApplicationHandler for PickerApp<'_> {
         // redraw here would just race the teardown in `window_event` above.
         if self.session.is_finished() {
             return;
+        }
+
+        // Retried here rather than left to `CursorMoved`, `Resized`, and the
+        // rest of `window_event`: those cover redrawing an overlay whose
+        // content needs to change, not recovering one whose last attempt
+        // didn't land. Without this, only the monitor under the pointer got
+        // that recovery, for free, from its own continuous stream of
+        // `CursorMoved`-driven redraws — see `Overlay::needs_redraw`.
+        for index in 0..self.overlays.len() {
+            if self.overlays[index].needs_redraw {
+                self.mark_dirty(index);
+            }
         }
 
         // The tray's next slot pulses, so while a palette is being built the

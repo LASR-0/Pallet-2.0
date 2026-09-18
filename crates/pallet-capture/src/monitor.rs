@@ -114,7 +114,7 @@ impl Monitor {
     /// image the user sees is 1080x1920. Comparing logical geometry against the
     /// raw buffer would produce a meaningless "scale" — 1920/1080 = 1.778 for
     /// an unscaled rotated display — so the axes are swapped first.
-    fn displayed_size(&self) -> (u32, u32) {
+    pub fn displayed_size(&self) -> (u32, u32) {
         if self.transform.swaps_axes() {
             (self.pixel_height, self.pixel_width)
         } else {
@@ -167,6 +167,18 @@ impl Monitor {
     /// The result is clamped to the buffer, because rounding at the far edge of
     /// a fractionally scaled display can otherwise land one pixel past the end.
     pub fn to_pixel(&self, x: i32, y: i32) -> Option<(u32, u32)> {
+        let (dx, dy) = self.to_displayed(x, y)?;
+        Some(self.displayed_to_buffer(dx, dy))
+    }
+
+    /// Map a **logical** desktop point to a pixel in the *displayed* image.
+    ///
+    /// This is [`Self::to_pixel`] stopping one step early, before the output's
+    /// rotation is undone, and it is the space anything drawn on screen belongs
+    /// in: the overlay's window covers the desktop's rotated layout, so a loupe
+    /// positioned in raw framebuffer coordinates would track the wrong axis on
+    /// a rotated display. Reading a colour still wants [`Self::to_pixel`].
+    pub fn to_displayed(&self, x: i32, y: i32) -> Option<(u32, u32)> {
         if !self.contains(x, y) {
             return None;
         }
@@ -182,13 +194,13 @@ impl Monitor {
             .max(0.0) as u32)
             .min(dh.saturating_sub(1));
 
-        Some(self.displayed_to_buffer(dx, dy))
+        Some((dx, dy))
     }
 
     /// Undo the output transform: displayed coordinates to raw buffer ones.
     ///
     /// The displayed image is `transform(buffer)`, so this applies the inverse.
-    fn displayed_to_buffer(&self, dx: u32, dy: u32) -> (u32, u32) {
+    pub fn displayed_to_buffer(&self, dx: u32, dy: u32) -> (u32, u32) {
         let bw = self.pixel_width.saturating_sub(1);
         let bh = self.pixel_height.saturating_sub(1);
 

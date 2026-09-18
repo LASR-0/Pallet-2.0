@@ -232,16 +232,25 @@ impl Renderer {
     /// changes only when the picker opens, whereas the shader runs for every
     /// pixel of every redraw.
     pub fn create_screen(&self, frame: &Frame) -> Result<Screen> {
-        let (w, h) = (frame.monitor.pixel_width, frame.monitor.pixel_height);
+        // Built in the monitor's *displayed* orientation, not the raw
+        // framebuffer's. A rotated display hands back pixels in the panel's
+        // native grid - 2560x1440 for a portrait 1440x2560 monitor - and
+        // uploading that unchanged draws the desktop lying on its side, with
+        // the loupe tracking the wrong axis, because the surface this is drawn
+        // onto is in the desktop's rotated layout. Rotating once, here, keeps
+        // the texture and every coordinate the shader sees in that one space.
+        let monitor = &frame.monitor;
+        let (w, h) = monitor.displayed_size();
         if w == 0 || h == 0 {
             return Err(Error::EmptyFrame);
         }
 
         let mut rgba = vec![0u8; w as usize * h as usize * 4];
-        for y in 0..h {
-            for x in 0..w {
-                let Some(c) = frame.pixel(x, y) else { continue };
-                let i = (y as usize * w as usize + x as usize) * 4;
+        for dy in 0..h {
+            for dx in 0..w {
+                let (bx, by) = monitor.displayed_to_buffer(dx, dy);
+                let Some(c) = frame.pixel(bx, by) else { continue };
+                let i = (dy as usize * w as usize + dx as usize) * 4;
                 rgba[i] = c.r;
                 rgba[i + 1] = c.g;
                 rgba[i + 2] = c.b;

@@ -556,12 +556,17 @@ impl Picker {
         }
     }
 
-    /// The cursor in one overlay's physical pixels, if it is on that monitor.
+    /// The cursor in one overlay's *displayed* pixels, if it is on that
+    /// monitor.
+    ///
+    /// Displayed rather than raw-framebuffer coordinates because this positions
+    /// the loupe and the HUD on a surface that is itself in the desktop's
+    /// rotated layout; the two only coincide on an unrotated display.
     fn local_cursor(&self, index: usize) -> Option<(u32, u32)> {
         let overlay = self.overlays.get(index)?;
         let frame = self.session.capture().frames.get(overlay.frame_index)?;
         let (x, y) = self.session.cursor();
-        frame.monitor.to_pixel(x, y)
+        frame.monitor.to_displayed(x, y)
     }
 
     /// Reconfigure a surface's swapchain after a configure event.
