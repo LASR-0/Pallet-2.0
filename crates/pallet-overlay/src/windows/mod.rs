@@ -20,7 +20,6 @@ use std::sync::Arc;
 use pallet_capture::Capture;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use windows::Win32::Foundation::{COLORREF, HWND};
-use windows::Win32::Graphics::Dwm::DwmFlush;
 use windows::Win32::UI::WindowsAndMessaging::{
     GWL_EXSTYLE, GetWindowLongW, LWA_ALPHA, SetLayeredWindowAttributes, SetWindowLongW,
     WS_EX_LAYERED,
@@ -28,7 +27,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, EventLoop};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, NamedKey};
 use winit::platform::run_on_demand::EventLoopExtRunOnDemand;
 use winit::window::{Window, WindowId, WindowLevel};
@@ -93,11 +92,23 @@ fn hide_via_transparency(window: &Window) {
 }
 
 /// Undo [`hide_via_transparency`], snapping the window to fully opaque.
+///
+/// The constant alpha goes to 255 *and* `WS_EX_LAYERED` comes back off. Only
+/// the first is needed to make the window visible, but leaving the style on
+/// keeps the window composited through DWM's layered path for the rest of the
+/// pick, which is not a combination a flip-model DXGI swapchain is meant to
+/// present into. Dropping it puts the window back on the ordinary path the
+/// swapchain expects, and costs nothing — transparency has done its job by
+/// the time this runs.
 fn reveal(window: &Window) {
     let Some(hwnd) = hwnd_of(window) else { return };
     // SAFETY: same as `hide_via_transparency`.
     unsafe {
+        // Opaque first: a stale constant alpha of 0 must not outlive the
+        // style that gives it meaning.
         let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 255, LWA_ALPHA);
+        let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE);
+        SetWindowLongW(hwnd, GWL_EXSTYLE, ex_style & !(WS_EX_LAYERED.0 as i32));
     }
 }
 
@@ -222,7 +233,43 @@ struct Overlay {
     /// stream of redraws from `CursorMoved`. This flag makes every overlay
     /// get that same persistent retry, driven from `about_to_wait`.
     needs_redraw: bool,
+    /// When this overlay stops re-presenting after [`reveal`], or `None`
+    /// once it has.
+    ///
+    /// Every frame presented before the reveal went into a window DXGI had
+    /// every reason to call occluded, and an occluded present is discarded
+    /// rather than composited — see `PickerApp::present_frame`. These are
+    /// the frames that re-present the same content once the window is
+    /// genuinely visible, so what DWM composites is the frozen desktop
+    /// rather than whatever the redirection surface happened to hold.
+    warmup_until: Option<std::time::Instant>,
+    /// When the next warmup frame is due. See [`WARMUP_INTERVAL`].
+    warmup_next: std::time::Instant,
 }
+
+/// How long an overlay keeps re-presenting after being revealed.
+///
+/// This was a count of frames before it was a span of time, and the
+/// difference is the whole point. A brand-new `HWND` takes DWM a moment to
+/// take up, and until it has, presenting into it achieves nothing no matter
+/// how many times it is done — which is exactly why two frames was enough on
+/// every pick after the first (warm windows) and not enough on the first
+/// (cold ones). Only the monitor under the pointer was ever reliably rescued,
+/// and only because `CursorMoved` happens to re-present it for as long as the
+/// hand on the mouse keeps moving. Hold still on the first pick and it went
+/// black like all the rest.
+const WARMUP_SPAN: std::time::Duration = std::time::Duration::from_millis(200);
+
+/// How far apart warmup frames are spaced.
+///
+/// Presenting as fast as the loop can turn would put every warmup frame
+/// inside a single composition pass and prove nothing; roughly one display
+/// refresh apart spreads them across passes, which is the only thing that
+/// gives DWM a chance to have caught up in between. Paced from
+/// `about_to_wait` with `ControlFlow::WaitUntil` rather than by blocking on
+/// each present, so the overlays still reveal in parallel instead of one
+/// monitor's pacing delaying the next one's first frame.
+const WARMUP_INTERVAL: std::time::Duration = std::time::Duration::from_millis(16);
 
 /// The running picker, driven by `winit`'s event loop for one pick.
 struct PickerApp<'a> {
@@ -291,26 +338,73 @@ impl PickerApp<'_> {
             return;
         }
 
+        // Asked for rather than assumed. This surface shows a frozen desktop,
+        // so there is no animation to tear and nothing to gain from pacing to
+        // the display, and `Mailbox` is worth having: `Fifo` blocks each
+        // present on a vblank, and since every overlay presents from the same
+        // thread, one monitor's wait is added to the next monitor's
+        // time-to-first-frame. But *which* backend this picker ended up on is
+        // not something it chooses — `new_without_display_handle_from_env`
+        // leaves that open — and configuring a surface with a present mode it
+        // does not advertise is a hard failure, not a downgrade. `Fifo` is the
+        // one mode every backend must support, so it is the floor.
+        let modes = overlay.surface.get_capabilities(&self.context.adapter);
+        let present_mode = if modes.present_modes.contains(&wgpu::PresentMode::Mailbox) {
+            wgpu::PresentMode::Mailbox
+        } else {
+            wgpu::PresentMode::Fifo
+        };
+
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: crate::render::FORMAT,
             color_space: wgpu::SurfaceColorSpace::Auto,
             width,
             height,
-            present_mode: wgpu::PresentMode::Fifo,
+            present_mode,
             alpha_mode: wgpu::CompositeAlphaMode::Opaque,
             view_formats: vec![],
             desired_maximum_frame_latency: 1,
         };
         overlay.surface.configure(self.renderer.device(), &config);
+        tracing::debug!(?present_mode, width, height, "surface configured");
     }
 
-    fn redraw(&mut self, index: usize) {
+    /// Draw this overlay's frame and put it on screen, reporting whether a
+    /// frame was actually submitted.
+    ///
+    /// # Why the return value is not the whole truth
+    ///
+    /// `false` means no frame was submitted at all, which is the caller's cue
+    /// to leave the overlay dirty and try again. `true` means `present` was
+    /// *called* — which is weaker than it sounds, and is the reason this is
+    /// split out of [`Self::redraw`] at all.
+    ///
+    /// `wgpu`'s DX12 backend presents with `IDXGISwapChain3::Present` and
+    /// treats the result as a plain `Result`. `DXGI_STATUS_OCCLUDED` — "this
+    /// window is not visible, so the frame was dropped rather than
+    /// composited" — is a *success* HRESULT, so it arrives here as `Ok`,
+    /// indistinguishable from a frame that reached the screen. A window held
+    /// at `LWA_ALPHA` 0 by [`hide_via_transparency`] is about as occluded as
+    /// a window gets, so every frame drawn before the reveal should be
+    /// assumed thrown away.
+    ///
+    /// That is the whole of the "away monitors render half black, half white
+    /// after the first pick" bug: the monitor under the pointer gets a
+    /// continuous stream of presents from `CursorMoved` and so re-presents
+    /// itself into visibility within a frame, while every other monitor
+    /// presented exactly once — before the reveal, into the void — and then
+    /// sat on the uninitialized redirection surface that composite left
+    /// behind. `needs_redraw` could not rescue it because, as far as this
+    /// code could tell, the present had succeeded. Hence
+    /// [`Overlay::warmup`]: the frames that go up *after* the window is
+    /// something DWM will composite.
+    fn present_frame(&mut self, index: usize) -> bool {
         let Some(overlay) = self.overlays.get(index) else {
-            return;
+            return false;
         };
         if !overlay.configured || overlay.width == 0 || overlay.height == 0 {
-            return;
+            return false;
         }
 
         let frame = match overlay.surface.get_current_texture() {
@@ -318,7 +412,7 @@ impl PickerApp<'_> {
             | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
             other => {
                 tracing::debug!("skipped a frame: {other:?}");
-                return;
+                return false;
             }
         };
 
@@ -383,12 +477,20 @@ impl PickerApp<'_> {
             self.renderer.draw(&overlay.screen, &target, view);
         }
         self.renderer.queue().present(frame);
-        // A frame actually made it to the surface — the one thing that
-        // earns clearing this. See `Overlay::needs_redraw`: the skipped-
-        // frame paths above return before reaching this line on purpose, so
-        // a failed attempt stays flagged and `about_to_wait` retries it
-        // instead of the overlay being stuck with whatever it last managed
-        // to show, correct or not.
+        true
+    }
+
+    /// Put this overlay's current frame on screen, revealing the window on
+    /// the way if this is its first.
+    fn redraw(&mut self, index: usize) {
+        if !self.present_frame(index) {
+            // See `Overlay::needs_redraw`: a frame that never got submitted
+            // leaves the overlay dirty so `about_to_wait` tries again,
+            // rather than stranding it on whatever it last managed to show.
+            return;
+        }
+        // Submitted — but not necessarily composited, and while the window
+        // is still transparent, almost certainly not. See `present_frame`.
         self.overlays[index].needs_redraw = false;
 
         // Only revealed now, after the frozen desktop is actually on the
@@ -396,34 +498,24 @@ impl PickerApp<'_> {
         // default frame for the gap between window creation and this point.
         if !self.overlays[index].shown {
             self.overlays[index].shown = true;
-            // `present` only *submits* this frame; DWM can still be a
-            // composition pass behind, so revealing right away sometimes
-            // showed a blank default frame for the gap between window
-            // creation and this point. One `DwmFlush` closes that gap on a
-            // picker's first reveal reliably.
-            let _ = unsafe { DwmFlush() };
             reveal(&self.overlays[index].window);
+
+            // The frame above went up while this window was transparent and
+            // was therefore very likely dropped as occluded, so the first
+            // thing to do with a now-visible window is draw it again —
+            // immediately and in this same call, not a loop turn later, so
+            // there is no composition pass where the window is opaque but
+            // has nothing of ours on it. `WARMUP_SPAN` covers the rest, for
+            // as long as it takes DWM to take up a window this new.
+            let _ = self.present_frame(index);
+            let now = std::time::Instant::now();
+            self.overlays[index].warmup_until = Some(now + WARMUP_SPAN);
+            self.overlays[index].warmup_next = now + WARMUP_INTERVAL;
+
             // Focus couldn't usefully land on a window nobody can see;
             // give it here instead, on the same window `resumed` picked.
-            //
-            // Every overlay gets touched, not just the first — an
-            // experiment for the still-open "away monitor renders stale or
-            // torn on every pick after this picker's first" bug (see
-            // `Overlay::needs_redraw`, which did not fix it: `present`
-            // seems to be succeeding, so the frame is not what's missing —
-            // DWM's composite of it is). One candidate left: Windows can
-            // recycle an HWND value moments after the previous pick's
-            // window using it is destroyed, and if DWM keeps any
-            // per-HWND composition state keyed on that value, an overlay
-            // that never receives an activation message has no reason to
-            // shed a stale one. `focus_window` sends exactly that message;
-            // handing focus straight back to overlay 0 afterward keeps the
-            // actual input-focus outcome the same as before this existed.
-            self.overlays[index].window.focus_window();
-            if index != 0
-                && let Some(first) = self.overlays.first()
-            {
-                first.window.focus_window();
+            if index == 0 {
+                self.overlays[index].window.focus_window();
             }
         }
     }
@@ -497,6 +589,11 @@ impl ApplicationHandler for PickerApp<'_> {
                     m.logical_height.max(1),
                 ));
 
+            // Timed per stage rather than per monitor: "a second and a bit
+            // before the first surface exists" is not an actionable
+            // measurement, and guessing which of these three it was is how
+            // you end up optimising the one that was already fast.
+            let began = std::time::Instant::now();
             let window = match event_loop.create_window(attrs) {
                 Ok(w) => Arc::new(w),
                 Err(e) => {
@@ -506,7 +603,9 @@ impl ApplicationHandler for PickerApp<'_> {
             };
             window.set_window_level(WindowLevel::AlwaysOnTop);
             hide_via_transparency(&window);
+            let window_ms = began.elapsed().as_millis();
 
+            let began = std::time::Instant::now();
             let surface = match self.context.instance.create_surface(Arc::clone(&window)) {
                 Ok(s) => s,
                 Err(e) => {
@@ -514,7 +613,9 @@ impl ApplicationHandler for PickerApp<'_> {
                     continue;
                 }
             };
+            let surface_ms = began.elapsed().as_millis();
 
+            let began = std::time::Instant::now();
             let screen = match self.renderer.create_screen(frame) {
                 Ok(s) => s,
                 Err(e) => {
@@ -522,6 +623,15 @@ impl ApplicationHandler for PickerApp<'_> {
                     continue;
                 }
             };
+            let screen_ms = began.elapsed().as_millis();
+            tracing::debug!(
+                monitor = frame_index,
+                transform = ?frame.monitor.transform,
+                window_ms,
+                surface_ms,
+                screen_ms,
+                "overlay built"
+            );
 
             let size = window.inner_size();
             self.window_index.insert(window.id(), self.overlays.len());
@@ -535,6 +645,8 @@ impl ApplicationHandler for PickerApp<'_> {
                 height: 0,
                 shown: false,
                 needs_redraw: true,
+                warmup_until: None,
+                warmup_next: std::time::Instant::now(),
             });
             let index = self.overlays.len() - 1;
             self.configure_surface(index, size.width, size.height);
@@ -672,12 +784,43 @@ impl ApplicationHandler for PickerApp<'_> {
         }
     }
 
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         // Nothing left to animate once the pick is over, and requesting a
         // redraw here would just race the teardown in `window_event` above.
         if self.session.is_finished() {
             return;
         }
+
+        // Pace each freshly revealed overlay's warmup frames. See
+        // `WARMUP_SPAN`: these are what get the frozen desktop onto a monitor
+        // that has no pointer on it to redraw it, whether that is a second
+        // monitor or — on the first pick, with a hand that never moved — the
+        // one the pointer is already sitting on.
+        let now = std::time::Instant::now();
+        let mut wake: Option<std::time::Instant> = None;
+        for index in 0..self.overlays.len() {
+            let Some(until) = self.overlays[index].warmup_until else {
+                continue;
+            };
+            if now >= until {
+                self.overlays[index].warmup_until = None;
+                continue;
+            }
+            if now >= self.overlays[index].warmup_next {
+                self.overlays[index].warmup_next = now + WARMUP_INTERVAL;
+                self.mark_dirty(index);
+            }
+            let due = self.overlays[index].warmup_next.min(until);
+            wake = Some(wake.map_or(due, |w| w.min(due)));
+        }
+        // `Wait` once the last warmup is spent: a pick that is just sitting
+        // there should cost nothing, which is the whole reason the overlay is
+        // event-driven. `request_redraw` wakes the loop regardless of this,
+        // so the palette pulse below is unaffected either way.
+        event_loop.set_control_flow(match wake {
+            Some(wake) => ControlFlow::WaitUntil(wake),
+            None => ControlFlow::Wait,
+        });
 
         // Retried here rather than left to `CursorMoved`, `Resized`, and the
         // rest of `window_event`: those cover redrawing an overlay whose
@@ -788,5 +931,28 @@ pub fn run_picker_with(
     // Every overlay window is owned by `app` and closes as it drops here;
     // `winit` on Windows tears down the native window synchronously, unlike
     // Wayland's buffered destroy requests that need an explicit round trip.
-    Ok(app.session.outcome().cloned().unwrap_or(Outcome::Cancelled))
+    let outcome = app.session.outcome().cloned().unwrap_or(Outcome::Cancelled);
+    drop(app);
+
+    // Dropping the overlays above only *marks* their textures and surfaces for
+    // destruction: `wgpu` defers the actual release until the device is next
+    // polled or something else is submitted to it. A resident picker does
+    // neither between picks — it goes straight back to blocking on its socket
+    // — so without this, two 4K textures per pick stay held until the *next*
+    // pick happens to submit something, which is the one moment they are most
+    // in the way.
+    //
+    // Housekeeping, not a fix for anything measured. It was added chasing a
+    // suspected slowdown across successive picks that turned out not to exist:
+    // resident size after eight picks was lower than at rest, and `setup_ms`
+    // showed no trend across them, only the same spread that `capture_ms`
+    // shows on code this does not touch. Kept because reclaiming promptly is
+    // the right shape for a process that lives for days between picks, and
+    // because it is free — the overlay is already off screen and the colour
+    // already in hand, so the only thing still waiting is the next pick.
+    if let Err(e) = context.device.poll(wgpu::PollType::wait_indefinitely()) {
+        tracing::warn!("could not reclaim the last pick's GPU memory: {e}");
+    }
+
+    Ok(outcome)
 }

@@ -115,3 +115,20 @@ strip = true
 # The picker must feel instant even in dev builds.
 [profile.dev.package."*"]
 opt-level = 2
+
+# `package."*"` covers dependencies only — a workspace member gets no
+# `-C opt-level` at all and so builds at 0, even when another member depends on
+# it. That is fine for crates that shuffle rows in and out of SQLite, and not
+# fine for the three that touch every pixel of a captured frame: a 4K display
+# is 8.3 million of them, converted one at a time through `Frame::pixel`
+# before the overlay can show anything. Named individually rather than raising
+# `[profile.dev]` wholesale so the rest of the workspace keeps its fast
+# compiles and its debuggability.
+[profile.dev.package.pallet-overlay]
+opt-level = 2
+
+[profile.dev.package.pallet-capture]
+opt-level = 2
+
+[profile.dev.package.pallet-color]
+opt-level = 2

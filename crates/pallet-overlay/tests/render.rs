@@ -57,6 +57,66 @@ fn px(buf: &[u8], w: u32, x: u32, y: u32) -> Color {
     Color::new(buf[i], buf[i + 1], buf[i + 2])
 }
 
+/// The same coded frame, but declared as a display rotated 90 degrees: the
+/// buffer stays `w` by `h` while what the user sees is `h` by `w`.
+fn rotated_frame(w: u32, h: u32) -> Frame {
+    let mut frame = coded_frame(w, h);
+    frame.monitor.transform = Transform::Rotate90;
+    // Logical geometry follows the *displayed* orientation, as it does on a
+    // real rotated output; leaving it at the buffer's would make `scale_x`
+    // report a meaningless ratio.
+    frame.monitor.logical_width = h;
+    frame.monitor.logical_height = w;
+    frame
+}
+
+#[test]
+fn a_rotated_display_is_uploaded_upright() {
+    // Rotation is the one path `create_screen` still converts pixel by pixel,
+    // and the only one where getting the direction backwards produces a
+    // perfectly plausible image — the desktop simply lies on its side. Both
+    // directions are self-consistent, so only an explicit expectation catches
+    // it, and until this test there was none: every other frame here is
+    // `Transform::Normal`.
+    let Some(r) = renderer() else { return };
+    let frame = rotated_frame(64, 32);
+    let (dw, dh) = frame.monitor.displayed_size();
+    assert_eq!((dw, dh), (32, 64), "a 90 degree display swaps its axes");
+
+    let screen = r.create_screen(&frame).expect("upload");
+    let out = r
+        .render_to_pixels(
+            &screen,
+            dw,
+            dh,
+            LoupeView {
+                // Parked away from every sampled pixel below. The crosshair
+                // runs the full width and height of the cursor's row and
+                // column, blending them to a flat 50% grey, so a cursor at the
+                // origin would "fail" this test with the one colour the shader
+                // is supposed to put there.
+                cursor: (16, 40),
+                radius: 0.0,
+                vignette: 0.0,
+                ..Default::default()
+            },
+        )
+        .expect("render");
+
+    // Checked against `Monitor::displayed_to_buffer` rather than a hand-copied
+    // rotation, so this asserts that the upload agrees with the mapping the
+    // loupe uses to read a colour out — the two disagreeing is what would put
+    // the picked colour somewhere other than under the cursor.
+    for (dx, dy) in [(0, 0), (31, 0), (0, 63), (31, 63), (7, 20)] {
+        let (bx, by) = frame.monitor.displayed_to_buffer(dx, dy);
+        assert_eq!(
+            px(&out, dw, dx, dy),
+            frame.pixel(bx, by).unwrap(),
+            "displayed ({dx},{dy}) should show buffer ({bx},{by})"
+        );
+    }
+}
+
 #[test]
 fn outside_the_loupe_the_screen_is_reproduced_exactly() {
     // The whole promise of a frozen screen: untouched pixels. Any colour

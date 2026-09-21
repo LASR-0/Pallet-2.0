@@ -7,6 +7,8 @@
 
 use bytemuck::Zeroable as _;
 use pallet_capture::Frame;
+use pallet_capture::frame::PixelFormat;
+use pallet_capture::monitor::Transform;
 use wgpu::util::DeviceExt;
 
 use crate::error::{Error, Result};
@@ -26,6 +28,13 @@ struct Uniforms {
     grid: f32,
     scale: f32,
     vignette: f32,
+    transform: u32,
+    /// Rounds the struct to 48 bytes. A struct in WGSL's uniform address space
+    /// is aligned to 16, so the 36 bytes above would be padded to 48 by the
+    /// shader whether or not Rust agrees — and a `Uniforms` that stops at 36
+    /// makes `bytes_of` write a buffer smaller than the binding the shader
+    /// declares.
+    _pad: [u32; 3],
 }
 
 /// What to draw this frame.
@@ -79,6 +88,35 @@ impl Default for LoupeView {
 /// one.
 pub const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
+/// The texture format a capture's bytes already are, so an upright frame can
+/// be uploaded without touching a single pixel on the CPU.
+///
+/// Only the frozen-frame texture is ever declared this way; render targets
+/// stay [`FORMAT`]. The alpha channel is taken exactly as captured, including
+/// from the `x` variants where it is officially undefined, because
+/// `loupe.wgsl` writes a literal `1.0` into the alpha of every fragment it
+/// returns — nothing downstream can observe what arrived here.
+const fn source_format(format: PixelFormat) -> wgpu::TextureFormat {
+    match format {
+        PixelFormat::Bgra8888 | PixelFormat::Bgrx8888 => wgpu::TextureFormat::Bgra8Unorm,
+        PixelFormat::Rgba8888 | PixelFormat::Rgbx8888 => wgpu::TextureFormat::Rgba8Unorm,
+    }
+}
+
+/// A display's rotation as `loupe.wgsl`'s `u.transform` numbers it.
+///
+/// The shader's `source_at` switches on these, and must keep agreeing with
+/// [`pallet_capture::Monitor::displayed_to_buffer`] — see the note there.
+const fn transform_code(transform: Transform) -> u32 {
+    match transform {
+        Transform::Normal => 0,
+        Transform::Rotate90 => 1,
+        Transform::Rotate180 => 2,
+        Transform::Rotate270 => 3,
+        Transform::Flipped(_) => 4,
+    }
+}
+
 /// The design's `inset 0 0 26px rgba(0,0,0,.28)`.
 pub const VIGNETTE: f32 = 0.28;
 
@@ -95,6 +133,13 @@ pub struct Screen {
     bind_group: wgpu::BindGroup,
     width: u32,
     height: u32,
+    /// How this monitor is rotated, as `loupe.wgsl` numbers it.
+    ///
+    /// Lives here rather than on [`LoupeView`] because it is a property of the
+    /// display the frame came from, not of what is being drawn this instant —
+    /// but the per-frame uniform write rewrites the whole struct, so it has to
+    /// be resent with every one of them.
+    transform: u32,
 }
 
 impl Screen {
@@ -228,47 +273,58 @@ impl Renderer {
 
     /// Upload a captured frame as a frozen backdrop for one monitor.
     ///
-    /// Converts to RGBA once, on upload, rather than in the shader: the frame
-    /// changes only when the picker opens, whereas the shader runs for every
-    /// pixel of every redraw.
+    /// The upload is a straight copy of the captured bytes for every display,
+    /// rotated or not: no channel swapping, no repacking of padded rows, and
+    /// no turning the image upright. The texture holds the framebuffer in the
+    /// panel's own grid, and `loupe.wgsl`'s `source_at` maps a displayed
+    /// position onto it when it reads.
+    ///
+    /// The work has to happen somewhere, and the shader is much the better
+    /// place: it is a handful of integer operations per fragment on hardware
+    /// built for them, against a CPU pass over 8.3 million pixels on a 4K
+    /// display that has to finish before anything can appear. It is also the
+    /// one pass that is paid on *every* pick rather than amortised — the frame
+    /// is frozen, so the shader's copy of it never changes, but a new one is
+    /// captured and uploaded each time the picker opens.
     pub fn create_screen(&self, frame: &Frame) -> Result<Screen> {
-        // Built in the monitor's *displayed* orientation, not the raw
-        // framebuffer's. A rotated display hands back pixels in the panel's
-        // native grid - 2560x1440 for a portrait 1440x2560 monitor - and
-        // uploading that unchanged draws the desktop lying on its side, with
-        // the loupe tracking the wrong axis, because the surface this is drawn
-        // onto is in the desktop's rotated layout. Rotating once, here, keeps
-        // the texture and every coordinate the shader sees in that one space.
+        // Two sizes are in play and mixing them up is the classic bug here.
+        // `displayed_size` is what the user sees and what the overlay surface
+        // is — 1440x2560 for a portrait monitor — and is what `Screen` reports
+        // and every coordinate outside this function is in. `pixel_width`/
+        // `pixel_height` is the raw framebuffer behind it, 2560x1440 for that
+        // same display, and is what the texture is, because that is the shape
+        // the bytes arrived in.
         let monitor = &frame.monitor;
         let (w, h) = monitor.displayed_size();
         if w == 0 || h == 0 {
             return Err(Error::EmptyFrame);
         }
+        let (bw, bh) = (monitor.pixel_width, monitor.pixel_height);
 
-        let mut rgba = vec![0u8; w as usize * h as usize * 4];
-        for dy in 0..h {
-            for dx in 0..w {
-                let (bx, by) = monitor.displayed_to_buffer(dx, dy);
-                let Some(c) = frame.pixel(bx, by) else { continue };
-                let i = (dy as usize * w as usize + dx as usize) * 4;
-                rgba[i] = c.r;
-                rgba[i + 1] = c.g;
-                rgba[i + 2] = c.b;
-                rgba[i + 3] = 0xFF;
-            }
+        // Uploading past the end of the capture would be a panic deep inside
+        // `wgpu` rather than something a caller could act on.
+        let needed = frame.stride * bh as usize;
+        if bw == 0 || bh == 0 || frame.data.len() < needed {
+            return Err(Error::EmptyFrame);
         }
+
+        // Declared in the layout the capture already has, so the sampler does
+        // the channel order for free, and `stride` feeds `bytes_per_row`
+        // directly, so rows padded for alignment need no repacking. Nothing
+        // here touches a pixel.
+        let transform = transform_code(monitor.transform);
 
         let texture = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("frozen-frame"),
             size: wgpu::Extent3d {
-                width: w,
-                height: h,
+                width: bw,
+                height: bh,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: FORMAT,
+            format: source_format(frame.format),
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
@@ -280,15 +336,15 @@ impl Renderer {
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            &rgba,
+            &frame.data,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(w * 4),
-                rows_per_image: Some(h),
+                bytes_per_row: Some(frame.stride as u32),
+                rows_per_image: Some(bh),
             },
             wgpu::Extent3d {
-                width: w,
-                height: h,
+                width: bw,
+                height: bh,
                 depth_or_array_layers: 1,
             },
         );
@@ -305,6 +361,8 @@ impl Renderer {
                     grid: 1.0,
                     scale: 1.0,
                     vignette: VIGNETTE,
+                    transform,
+                    _pad: [0; 3],
                 }),
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             });
@@ -331,6 +389,7 @@ impl Renderer {
             bind_group,
             width: w,
             height: h,
+            transform,
         })
     }
 
@@ -492,6 +551,8 @@ impl Renderer {
                 grid: if view.grid { 1.0 } else { 0.0 },
                 scale: view.scale.max(0.5),
                 vignette: view.vignette.clamp(0.0, 1.0),
+                transform: screen.transform,
+                _pad: [0; 3],
             }),
         );
 

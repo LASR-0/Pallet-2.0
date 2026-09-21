@@ -19,6 +19,10 @@ struct Uniforms {
     grid: f32,
     scale: f32,
     vignette: f32,
+    // How the display this frame came from is rotated, matching
+    // `Monitor::transform`: 0 upright, 1/2/3 for 90/180/270 degrees, 4
+    // mirrored. See `source_at`.
+    transform: u32,
 };
 
 @group(0) @binding(0) var frozen: texture_2d<f32>;
@@ -33,9 +37,40 @@ fn vs(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
     return vec4<f32>(x, -y, 0.0, 1.0);
 }
 
+// Read a source pixel by its position in the *displayed* image.
+//
+// The texture holds the framebuffer exactly as the capture backend handed it
+// over, which on a rotated display is the panel's own grid: 3840x2160 behind a
+// portrait 2160x3840 desktop. Turning it upright used to be a CPU pass over
+// every pixel before upload, which cost ten times what an upright monitor did
+// for the same pixel count — a rotation reads down a column while writing
+// along a row, so it misses cache on nearly every one of them. Doing it here
+// instead costs a handful of integer operations per fragment on hardware built
+// for exactly that, and lets the upload be a straight memcpy for every
+// display rather than only unrotated ones.
+//
+// This mirrors `Monitor::displayed_to_buffer`, which is what the picker reads
+// the committed colour through; the two disagreeing would show one pixel and
+// pick another, so `a_rotated_display_is_uploaded_upright` checks this against
+// that function rather than against a hand-copied rotation.
 fn source_at(p: vec2<i32>) -> vec4<f32> {
     let size = vec2<i32>(textureDimensions(frozen));
-    let c = clamp(p, vec2<i32>(0, 0), size - vec2<i32>(1, 1));
+    let bw = size.x - 1;
+    let bh = size.y - 1;
+
+    var b = p;
+    switch u.transform {
+        case 1u: { b = vec2<i32>(p.y, bh - p.x); }
+        case 2u: { b = vec2<i32>(bw - p.x, bh - p.y); }
+        case 3u: { b = vec2<i32>(bw - p.y, p.x); }
+        // Mirroring is rare enough that Pallet handles the horizontal flip and
+        // treats any rotation on top of it as unrotated, matching the Rust
+        // side rather than guessing at a combination neither can test.
+        case 4u: { b = vec2<i32>(bw - p.x, p.y); }
+        default: {}
+    }
+
+    let c = clamp(b, vec2<i32>(0, 0), size - vec2<i32>(1, 1));
     return textureLoad(frozen, c, 0);
 }
 
