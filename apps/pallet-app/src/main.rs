@@ -635,10 +635,30 @@ fn connect_to_picker() -> Result<pallet_ipc::transport::Stream, String> {
     }
 
     tracing::info!("starting the picker");
-    std::process::Command::new(&picker)
+    let mut command = std::process::Command::new(&picker);
+    command
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+
+    // No console window for the picker.
+    //
+    // It is a console-subsystem binary, so Windows hands it a fresh console
+    // when a windowed process launches it — a black terminal that appears
+    // beside the app, outlives it in the user's mind as "something crashed",
+    // and has nothing in it, because the streams above are all null anyway.
+    // `CREATE_NO_WINDOW` suppresses the console without changing the
+    // subsystem, which matters: the binary keeps printing normally when a
+    // developer runs it in a terminal themselves, and `PALLET_LOG_FILE`
+    // covers diagnosing it here, where there is nowhere for output to go.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    command
         .spawn()
         .map_err(|e| format!("could not start the picker: {e}"))?;
 

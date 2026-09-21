@@ -20,6 +20,21 @@ test:
 build:
     cargo build --workspace --release
 
+# Build the installers and a portable folder: .msi, .exe setup, and a zip.
+#
+# `CARGO_TARGET_DIR` is not a preference. Tauri's WiX template writes absolute
+# paths into an XML document without escaping them, so building from a checkout
+# under a directory containing an `&` — "OneDrive - KSB SE & Co KGaA", say —
+# emits a `main.wxs` that will not parse, and the bundler fails with nothing
+# more helpful than "failed to run candle.exe". Moving only the *target*
+# directory somewhere plainer keeps every path WiX interpolates clean, and
+# `scripts/stage-picker.mjs` follows it there.
+#
+# Note that this builds into a different target directory from every other
+# recipe here, so it compiles the world the first time it runs.
+bundle:
+    cd apps/pallet-app && CARGO_TARGET_DIR=C:/pallet-build node ../../ui/node_modules/@tauri-apps/cli/tauri.js build
+
 # Print where Pallet stores things on this machine.
 paths:
     cargo run -q -p pallet-cli -- paths

@@ -124,7 +124,16 @@ pub struct PickerContext {
     instance: wgpu::Instance,
     adapter: wgpu::Adapter,
     device: wgpu::Device,
-    queue: wgpu::Queue,
+    /// Built here, with the device, rather than per pick.
+    ///
+    /// This compiles the shaders and creates the render pipelines, which the
+    /// driver turns into machine code — and it was being redone on every
+    /// single pick, the first of which is the worst possible moment for it.
+    /// A pick issued immediately after the picker starts (which is exactly
+    /// what the app does: it spawns the picker, waits for its socket, and
+    /// sends the request) paid for that compile with the overlay already on
+    /// screen and nothing drawn on it yet.
+    renderer: Renderer,
 }
 
 impl std::fmt::Debug for PickerContext {
@@ -193,12 +202,16 @@ impl PickerContext {
         drop(surface);
         drop(window);
 
+        let began = std::time::Instant::now();
+        let renderer = Renderer::from_device(device.clone(), queue);
+        tracing::debug!(ms = began.elapsed().as_millis(), "pipelines built");
+
         Ok(Self {
             event_loop: RefCell::new(event_loop),
             instance,
             adapter,
             device,
-            queue,
+            renderer,
         })
     }
 
@@ -274,7 +287,8 @@ const WARMUP_INTERVAL: std::time::Duration = std::time::Duration::from_millis(16
 /// The running picker, driven by `winit`'s event loop for one pick.
 struct PickerApp<'a> {
     context: &'a PickerContext,
-    renderer: Renderer,
+    /// Borrowed from the context, which holds the one shared instance.
+    renderer: &'a Renderer,
     session: Session,
 
     overlays: Vec<Overlay>,
@@ -367,7 +381,26 @@ impl PickerApp<'_> {
             desired_maximum_frame_latency: 1,
         };
         overlay.surface.configure(self.renderer.device(), &config);
-        tracing::debug!(?present_mode, width, height, "surface configured");
+
+        // Restarting the warmup here — treating a reconfigure as a second
+        // reveal, since it does discard the swapchain DWM was compositing —
+        // was tried and made things measurably worse: one black monitor on a
+        // first pick became two. Re-presenting *into* the resize storm is
+        // evidently not the answer, so the storm itself is the thing to
+        // understand. Hence the index below.
+        tracing::debug!(
+            monitor = index,
+            ?present_mode,
+            width,
+            height,
+            expected = ?self
+                .session
+                .capture()
+                .frames
+                .get(self.overlays[index].frame_index)
+                .map(|f| (f.monitor.logical_width, f.monitor.logical_height)),
+            "surface configured"
+        );
     }
 
     /// Draw this overlay's frame and put it on screen, reporting whether a
@@ -870,7 +903,7 @@ pub fn run_picker_with(
         .map(|f| f.monitor.scale_x() as f32)
         .fold(1.0f32, f32::max);
 
-    let renderer = Renderer::from_device(context.device.clone(), context.queue.clone());
+    let renderer = &context.renderer;
 
     // Start at the centre of the first monitor; the first pointer event
     // corrects this before anything is drawn.

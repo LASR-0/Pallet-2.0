@@ -9,6 +9,9 @@ ui/dist/
 # tauri
 apps/pallet-app/gen/
 apps/pallet-app/target/
+# Staged by scripts/stage-picker.mjs on every release build: a copy of the
+# picker under the target-triple name the bundler requires, not a source file.
+apps/pallet-app/binaries/
 
 # local runtime state
 .pallet-home/

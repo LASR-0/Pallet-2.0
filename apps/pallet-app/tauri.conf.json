@@ -6,7 +6,7 @@
   "build": {
     "frontendDist": "../../ui/dist",
     "beforeDevCommand": "cargo build -p pallet-picker && pnpm --dir ../ui dev",
-    "beforeBuildCommand": "cargo build --release -p pallet-picker && pnpm --dir ../ui build",
+    "beforeBuildCommand": "cargo build --release -p pallet-picker && node ../scripts/stage-picker.mjs && pnpm --dir ../ui build",
     "devUrl": "http://127.0.0.1:5173"
   },
   "app": {
@@ -32,6 +32,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "externalBin": ["binaries/pallet-picker"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

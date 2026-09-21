@@ -150,17 +150,19 @@ fn capture_index(capture: &mut DxgiCapture, index: usize) -> Result<Frame> {
 }
 
 fn capture_from(target: &mut Target) -> Result<Frame> {
-    match acquire(target) {
-        Ok(cached) => {
-            let frame = Frame {
-                monitor: target.monitor.clone(),
-                data: cached.data.clone(),
-                stride: cached.stride,
-                format: PixelFormat::Bgra8888,
-            };
-            target.last_frame = Some(cached);
-            Ok(frame)
-        }
+    let keep = |target: &mut Target, cached: CachedFrame| {
+        let frame = Frame {
+            monitor: target.monitor.clone(),
+            data: cached.data.clone(),
+            stride: cached.stride,
+            format: PixelFormat::Bgra8888,
+        };
+        target.last_frame = Some(cached);
+        frame
+    };
+
+    match acquire(target, true) {
+        Ok(cached) => Ok(keep(target, cached)),
         Err(TimedOut) => match &target.last_frame {
             Some(cached) => Ok(Frame {
                 monitor: target.monitor.clone(),
@@ -168,12 +170,29 @@ fn capture_from(target: &mut Target) -> Result<Frame> {
                 stride: cached.stride,
                 format: PixelFormat::Bgra8888,
             }),
-            // Nothing has ever been captured on this output and the desktop
-            // has not painted within the timeout either; vanishingly rare,
-            // but representable rather than a panic.
-            None => Err(Error::Refused(
-                "the desktop did not produce a frame in time".into(),
-            )),
+            // Nothing has ever been captured on this output and nothing has
+            // painted on it either, so there is no previous frame to serve
+            // and no fresh one to be had. Take whatever DXGI offers.
+            //
+            // That may be the pointer-only frame `acquire` was refusing —
+            // which is to say it may be black. It is still the better of the
+            // two endings: a blank overlay a second pick fixes, rather than
+            // an error where the user asked for a colour. Reaching here at
+            // all means an output that has not painted a single pixel in
+            // 400ms on the first capture ever taken of it.
+            None => {
+                tracing::warn!(
+                    monitor = %target.monitor.id,
+                    "no desktop image yet; the frozen frame may be blank"
+                );
+                match acquire(target, false) {
+                    Ok(cached) => Ok(keep(target, cached)),
+                    Err(TimedOut) => Err(Error::Refused(
+                        "the desktop did not produce a frame in time".into(),
+                    )),
+                    Err(Failed(e)) => Err(e),
+                }
+            }
         },
         Err(Failed(e)) => Err(e),
     }
@@ -193,29 +212,84 @@ impl From<Error> for AcquireOutcome {
     }
 }
 
+/// How long [`acquire`] keeps asking for a frame that actually contains a
+/// desktop image before giving up and letting the caller fall back.
+///
+/// Generous because the cost of running out is a black screenshot, and cheap
+/// because it is only ever reached on a desktop that is genuinely not
+/// painting — in which case the cached frame it falls back to is still a true
+/// picture of a screen that has not changed.
+const FRESH_DEADLINE: std::time::Duration = std::time::Duration::from_millis(400);
+
 /// Ask Desktop Duplication for the next frame and read it back to system
 /// memory.
-fn acquire(target: &Target) -> std::result::Result<CachedFrame, AcquireOutcome> {
-    let mut frame_info = DXGI_OUTDUPL_FRAME_INFO::default();
-    let mut resource: Option<IDXGIResource> = None;
+///
+/// # Why this loops
+///
+/// `AcquireNextFrame` succeeding does not mean it handed over a picture of
+/// the desktop. It reports *two* kinds of update through `frame_info`, and
+/// only one of them comes with pixels: when the pointer moved but the desktop
+/// image did not change, it returns `S_OK` with `LastPresentTime` set to zero
+/// and a texture whose contents Microsoft's documentation explicitly says not
+/// to process. Copying it out anyway yields a black frame.
+///
+/// A duplication session that has just been opened answers its very first
+/// call that way, which is how this reached a user: every pick worked except
+/// the first one after the picker started, which is exactly when the session
+/// is new — and it was the monitor showing the *unchanged* half of the
+/// desktop that came back black, while a monitor something had just moved on
+/// captured fine.
+///
+/// `require_fresh` is what distinguishes the two callers: the pick wants a
+/// real desktop image and can wait a little for one, while the last-resort
+/// path in [`capture_from`] has nothing cached to fall back on and would
+/// rather have whatever DXGI will give it than fail outright.
+fn acquire(
+    target: &Target,
+    require_fresh: bool,
+) -> std::result::Result<CachedFrame, AcquireOutcome> {
+    let until = std::time::Instant::now() + FRESH_DEADLINE;
 
-    // SAFETY: all three out-parameters are plain stack values the call
-    // fills in; `resource` starts `None`, which is what DXGI requires.
-    let acquired = unsafe {
-        target
-            .duplication
-            .AcquireNextFrame(500, &mut frame_info, &mut resource)
-    };
+    let resource = loop {
+        let mut frame_info = DXGI_OUTDUPL_FRAME_INFO::default();
+        let mut resource: Option<IDXGIResource> = None;
 
-    if let Err(e) = &acquired {
-        if e.code() == DXGI_ERROR_WAIT_TIMEOUT {
+        // SAFETY: all three out-parameters are plain stack values the call
+        // fills in; `resource` starts `None`, which is what DXGI requires.
+        let acquired = unsafe {
+            target
+                .duplication
+                .AcquireNextFrame(500, &mut frame_info, &mut resource)
+        };
+
+        if let Err(e) = &acquired {
+            if e.code() == DXGI_ERROR_WAIT_TIMEOUT {
+                return Err(TimedOut);
+            }
+            if e.code() == DXGI_ERROR_ACCESS_LOST {
+                return Err(Error::Refused("duplication session invalidated".into()).into());
+            }
+            return Err(Error::Refused(format!("AcquireNextFrame: {e}")).into());
+        }
+
+        if !require_fresh || frame_info.LastPresentTime != 0 {
+            break resource;
+        }
+
+        // Pointer-only update: no pixels came with it. Hand the frame back —
+        // holding one blocks the next acquire — and ask again.
+        // SAFETY: a frame was successfully acquired immediately above.
+        unsafe {
+            let _ = target.duplication.ReleaseFrame();
+        }
+
+        if std::time::Instant::now() >= until {
+            // Out of patience rather than out of luck: the desktop really is
+            // not painting. `capture_from` serves the last frame this output
+            // produced, which is what an unchanged screen still looks like.
             return Err(TimedOut);
         }
-        if e.code() == DXGI_ERROR_ACCESS_LOST {
-            return Err(Error::Refused("duplication session invalidated".into()).into());
-        }
-        return Err(Error::Refused(format!("AcquireNextFrame: {e}")).into());
-    }
+    };
 
     let resource = resource
         .ok_or_else(|| Error::Refused("DXGI reported a frame but gave no resource".into()))?;
