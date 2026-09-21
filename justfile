@@ -32,8 +32,15 @@ build:
 #
 # Note that this builds into a different target directory from every other
 # recipe here, so it compiles the world the first time it runs.
+#
+# Finished artifacts are copied back into `dist/` at the end. Without that
+# they are the only build output that does not appear in the working tree,
+# and the stale `target/release/pallet-app.exe` left over from `just build`
+# sits exactly where someone would look for them — close enough to run, old
+# enough to reproduce bugs that were already fixed.
 bundle:
     cd apps/pallet-app && CARGO_TARGET_DIR=C:/pallet-build node ../../ui/node_modules/@tauri-apps/cli/tauri.js build
+    node scripts/collect-bundle.mjs
 
 # Print where Pallet stores things on this machine.
 paths:

@@ -778,6 +778,32 @@ async fn pick_colour(
     // from, and the frozen image is mostly Pallet.
     let hidden = window.hide().is_ok();
 
+    // `hide` only marks the window hidden. DWM takes it off the screen on its
+    // next composition pass, and until that happens the desktop — which is
+    // what Desktop Duplication hands the picker — still has Pallet in it.
+    //
+    // Nothing used to wait for that pass, and with a warm picker the request
+    // below reaches the capture about a millisecond later, well inside the
+    // ~16ms between passes. The result looked baffling rather than like a
+    // race: the window vanished correctly from a pick started on the second
+    // monitor and never from one started on the first. That is capture order.
+    // `capture_all` walks the monitors in sequence at roughly 30-50ms each,
+    // so monitor 0 is captured immediately — losing — while monitor 1 is
+    // captured two or three composition passes later, by which time the
+    // window really has gone. The first pick after launch also "worked",
+    // because spawning the picker cost a quarter of a second first.
+    //
+    // One flush orders the capture after the hide instead of racing it, on
+    // every monitor and whether or not the picker is already running.
+    #[cfg(windows)]
+    if hidden {
+        // SAFETY: no arguments, no outputs; this only blocks the calling
+        // thread until DWM finishes its next composition.
+        unsafe {
+            let _ = windows::Win32::Graphics::Dwm::DwmFlush();
+        }
+    }
+
     let result: Result<Vec<pallet_ipc::TakenColour>, String> =
         tauri::async_runtime::spawn_blocking(move || {
             let mut stream = connect_to_picker()?;

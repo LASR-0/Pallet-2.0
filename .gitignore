@@ -1,4 +1,6 @@
 /target
+# Release artifacts collected by `just bundle`.
+/dist
 **/*.rs.bk
 
 # frontend

@@ -28,5 +28,10 @@ serde_json.workspace = true
 tracing.workspace = true
 anyhow.workspace = true
 
+[target.'cfg(target_os = "windows")'.dependencies]
+# `DwmFlush`, to order the window's hide before the picker's capture rather
+# than racing it — see `pick` in `main.rs`.
+windows = { workspace = true, features = ["Win32_Graphics_Dwm"] }
+
 [lints]
 workspace = true

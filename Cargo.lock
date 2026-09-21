@@ -3224,6 +3224,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tracing",
+ "windows 0.62.2",
 ]
 
 [[package]]
