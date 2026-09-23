@@ -10,18 +10,25 @@ use time::format_description::well_known::Rfc3339;
 use uuid::Uuid;
 
 use crate::error::{Error, Result};
-use crate::model::{NewColour, Palette, Pick, StoredColour};
+use crate::model::{Member, NewColour, Palette, Pick, StoredColour, Token};
 
 /// Ordered schema migrations. Append only: never edit a shipped migration,
 /// because databases in the wild have already applied it.
 fn migrations() -> Migrations<'static> {
-    Migrations::new(vec![M::up(include_str!("../migrations/0001_initial.sql"))])
+    Migrations::new(vec![
+        M::up(include_str!("../migrations/0001_initial.sql")),
+        M::up(include_str!("../migrations/0002_palette_tokens.sql")),
+    ])
 }
 
 /// A handle to Pallet's library.
 #[derive(Debug)]
 pub struct Store {
-    conn: Connection,
+    /// Visible to the crate so `share` can drive its own transaction. Every
+    /// other module goes through the methods below; import is the one
+    /// operation that spans most of the schema at once and would otherwise
+    /// need a bespoke method here for each table it touches.
+    pub(crate) conn: Connection,
 }
 
 impl Store {
@@ -130,6 +137,13 @@ impl Store {
         self.create_palette_at(name, colour_ids, OffsetDateTime::now_utc())
     }
 
+    /// Create a palette whose members carry export tokens.
+    pub fn create_palette_with(&self, name: &str, members: &[Member]) -> Result<String> {
+        let id = self.create_palette_at(name, &[], OffsetDateTime::now_utc())?;
+        self.set_palette_members(&id, members)?;
+        Ok(id)
+    }
+
     /// Create a palette with an explicit creation time.
     ///
     /// Needed wherever a palette predates its arrival in the library — seeded
@@ -154,8 +168,14 @@ impl Store {
         Ok(id)
     }
 
-    /// Replace a palette's membership, in order.
+    /// Replace a palette's membership, in order, dropping any tokens it had.
     pub fn set_palette_colours(&self, palette_id: &str, colour_ids: &[String]) -> Result<()> {
+        let members: Vec<Member> = colour_ids.iter().map(Member::new).collect();
+        self.set_palette_members(palette_id, &members)
+    }
+
+    /// Replace a palette's membership, in order, with what each slot is called.
+    pub fn set_palette_members(&self, palette_id: &str, members: &[Member]) -> Result<()> {
         // One transaction so a failure part-way cannot leave a half-written
         // palette behind. `unchecked_transaction` is rusqlite's supported way
         // to do this from `&self`; the borrow checker cannot prove there is no
@@ -167,11 +187,23 @@ impl Store {
         )?;
         {
             let mut stmt = tx.prepare(
-                "INSERT INTO palette_colours (palette_id, colour_id, position)
-                 VALUES (?1, ?2, ?3)",
+                "INSERT INTO palette_colours
+                     (palette_id, colour_id, position, token_group, token_name)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
             )?;
-            for (position, colour_id) in colour_ids.iter().enumerate() {
-                stmt.execute(params![palette_id, colour_id, position as i64])?;
+            for (position, member) in members.iter().enumerate() {
+                // Blanks are stored as NULL, not as ''. A field the user
+                // cleared means "no token", which is what the exporters treat
+                // as absent; '' would be a name they chose to be empty.
+                let group = blank_to_none(member.token.group.as_deref());
+                let name = blank_to_none(member.token.name.as_deref());
+                stmt.execute(params![
+                    palette_id,
+                    member.colour_id,
+                    position as i64,
+                    group,
+                    name
+                ])?;
             }
         }
         tx.execute(
@@ -204,21 +236,34 @@ impl Store {
             return Ok(None);
         };
 
+        // Colours and tokens come out of one query, so the two vectors below
+        // cannot end up different lengths or differently ordered.
         let mut stmt = self.conn.prepare(
-            "SELECT c.id, c.r, c.g, c.b, c.name, c.source_space, c.created_at
+            "SELECT c.id, c.r, c.g, c.b, c.name, c.source_space, c.created_at,
+                    pc.token_group, pc.token_name
              FROM palette_colours pc
              JOIN colours c ON c.id = pc.colour_id
              WHERE pc.palette_id = ?1
              ORDER BY pc.position",
         )?;
-        let colours = stmt
-            .query_map(params![&id], colour_from_row)?
+        let rows = stmt
+            .query_map(params![&id], |row| {
+                Ok((
+                    colour_from_row(row)?,
+                    Token {
+                        group: row.get(7)?,
+                        name: row.get(8)?,
+                    },
+                ))
+            })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
+        let (colours, tokens) = rows.into_iter().unzip();
 
         Ok(Some(Palette {
             id,
             name,
             colours,
+            tokens,
             created_at: parse_time(&created_at),
             updated_at: parse_time(&updated_at),
         }))
@@ -406,4 +451,16 @@ fn now() -> String {
 
 fn parse_time(text: &str) -> OffsetDateTime {
     OffsetDateTime::parse(text, &Rfc3339).unwrap_or(OffsetDateTime::UNIX_EPOCH)
+}
+
+/// A token field that is absent or only whitespace, stored as NULL.
+///
+/// The UI hands back whatever is in the text field, and a cleared one arrives
+/// as `Some("")`. Keeping that would give a member a token whose name is
+/// nothing, which the exporters would then have to keep re-deciding about.
+fn blank_to_none(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(str::to_owned)
 }

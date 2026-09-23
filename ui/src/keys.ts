@@ -85,6 +85,27 @@ export function matches(event: KeyboardEvent, binding: string): boolean {
   );
 }
 
+/**
+ * Spell a stored binding out for the screen: `CTRL+SHIFT+P` → `CTRL + SHIFT + P`.
+ *
+ * Goes through `parseCombo` rather than splitting the string, so a binding
+ * hand-written in `config.toml` as `control-shift-p` is shown in the same form
+ * as one captured in Settings. Modifiers come out in a fixed order for the
+ * same reason: the order they were typed in is not worth showing.
+ */
+export function displayCombo(binding: string): string {
+  const combo = parseCombo(binding);
+  if (!combo) return "";
+
+  const parts: string[] = [];
+  if (combo.ctrl) parts.push("CTRL");
+  if (combo.shift) parts.push("SHIFT");
+  if (combo.alt) parts.push("ALT");
+  if (combo.meta) parts.push("SUPER");
+  parts.push(combo.key);
+  return parts.join(" + ");
+}
+
 /** Modifier keys, which cannot be a binding on their own. */
 const MODIFIER_KEYS = new Set(["CONTROL", "SHIFT", "ALT", "META", "OS"]);
 

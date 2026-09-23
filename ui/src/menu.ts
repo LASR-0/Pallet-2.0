@@ -7,7 +7,7 @@
  * Nothing here invents a new colour or metric.
  */
 
-import { el } from "./dom";
+import { el, gutter } from "./dom";
 
 export interface MenuItem {
   label: string;
@@ -33,7 +33,7 @@ export function showMenu(x: number, y: number, items: MenuItem[]): void {
     style:
       "position:fixed;z-index:100;min-width:150px;padding:4px;" +
       "border-radius:var(--rad2);background:var(--panel);" +
-      "border:1px solid var(--line);box-shadow:var(--shadow)",
+      "border:1px solid var(--line);box-shadow:var(--pop)",
   });
 
   for (const item of items) {
@@ -69,11 +69,16 @@ export function showMenu(x: number, y: number, items: MenuItem[]): void {
   open = menu;
 
   // Keep the menu inside the window; a 440px window has little room to spare.
+  // Measured against the shell, not the viewport: the viewport includes the
+  // transparent gutter the window's shadow falls into, so clamping to it would
+  // put the menu out past the edge of the window.
+  const pad = gutter();
+  const min = pad + 6;
   const box = menu.getBoundingClientRect();
-  const left = Math.min(x, window.innerWidth - box.width - 6);
-  const top = Math.min(y, window.innerHeight - box.height - 6);
-  menu.style.left = `${Math.max(6, left)}px`;
-  menu.style.top = `${Math.max(6, top)}px`;
+  const left = Math.min(x, window.innerWidth - pad - box.width - 6);
+  const top = Math.min(y, window.innerHeight - pad - box.height - 6);
+  menu.style.left = `${Math.max(min, left)}px`;
+  menu.style.top = `${Math.max(min, top)}px`;
 }
 
 /** Dismiss on the next click, right-click, scroll or Escape anywhere. */

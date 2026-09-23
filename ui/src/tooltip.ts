@@ -10,7 +10,7 @@
  * `title` would get the platform's version as well as this one.
  */
 
-import { el } from "./dom";
+import { el, gutter } from "./dom";
 
 const MONO = "var(--mono),monospace";
 
@@ -18,6 +18,8 @@ const MONO = "var(--mono),monospace";
 const DELAY_MS = 450;
 /** Gap between the pointer and the tip. */
 const OFFSET = 14;
+/** Gap between the tip and the edge of the shell. */
+const MARGIN = 6;
 
 let tip: HTMLElement | null = null;
 let timer: number | null = null;
@@ -38,21 +40,31 @@ function show(text: string, x: number, y: number): void {
     style:
       "position:fixed;z-index:200;pointer-events:none;max-width:240px;" +
       "padding:5px 8px;border-radius:6px;background:var(--chrome);" +
-      "color:var(--ink);border:1px solid var(--line);box-shadow:var(--shadow);" +
+      "color:var(--ink);border:1px solid var(--line);box-shadow:var(--pop);" +
       `font:400 10px/1.35 ${MONO};letter-spacing:.02em;white-space:pre-wrap`,
     text,
   });
   document.body.append(tip);
 
-  // Keep it inside a 440px window, which has very little room to spare.
+  // Keep it inside the shell, which has very little room to spare — and inside
+  // the shell rather than the viewport, since the viewport now includes the
+  // transparent gutter the window's shadow falls into, and a tip clamped to
+  // that would hang off the edge of the window it belongs to.
+  const pad = gutter();
   const box = tip.getBoundingClientRect();
-  const left = Math.min(Math.max(6, x + OFFSET), window.innerWidth - box.width - 6);
+  const min = pad + MARGIN;
+  const left = Math.min(
+    Math.max(min, x + OFFSET),
+    window.innerWidth - pad - box.width - MARGIN,
+  );
   const below = y + OFFSET;
   const top =
-    below + box.height + 6 > window.innerHeight ? y - box.height - OFFSET : below;
+    below + box.height + min > window.innerHeight
+      ? y - box.height - OFFSET
+      : below;
 
-  tip.style.left = `${left}px`;
-  tip.style.top = `${Math.max(6, top)}px`;
+  tip.style.left = `${Math.max(min, left)}px`;
+  tip.style.top = `${Math.max(min, top)}px`;
 }
 
 /** Start watching for elements carrying `data-tip`. */

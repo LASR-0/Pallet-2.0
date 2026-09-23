@@ -39,6 +39,13 @@ export interface PickActions {
   onCopy: (hex: string) => void;
 }
 
+/**
+ * @param shortcut The pick binding as it should be read, or "" while the
+ *   bindings are still loading or if the binding has been cleared. The chip is
+ *   left out entirely rather than showing a stale default — this used to be
+ *   the literal string "CTRL + SHIFT + P", which went on claiming that after
+ *   the binding had been changed in Settings.
+ */
 export function renderPick(
   recents: RecentPick[] | null,
   shortcut: string,
@@ -52,7 +59,7 @@ export function renderPick(
       style:
         "display:flex;flex-direction:column;align-items:center;gap:12px;" +
         "padding:30px 16px;border-radius:var(--rad2);background:var(--panel);" +
-        "border:1px dashed var(--line)",
+        "border:1px dashed var(--line);box-shadow:var(--lift)",
       onClick: actions.onPick,
     },
     [
@@ -76,12 +83,14 @@ export function renderPick(
           }),
         ],
       ),
-      el("span", {
-        style:
-          "padding:6px 11px;border-radius:7px;background:var(--hover);" +
-          `font:500 10px/1 ${MONO};letter-spacing:.08em;color:var(--mute)`,
-        text: shortcut,
-      }),
+      shortcut
+        ? el("span", {
+            style:
+              "padding:6px 11px;border-radius:7px;background:var(--hover);" +
+              `font:500 10px/1 ${MONO};letter-spacing:.08em;color:var(--mute)`,
+            text: shortcut,
+          })
+        : null,
     ],
   );
   // The description is the one place the design wants a hard line break.
@@ -120,7 +129,7 @@ export function renderPick(
             const node = el("div", {
               style:
                 `aspect-ratio:1;border-radius:7px;cursor:pointer;background:${r.hex};` +
-                "box-shadow:inset 0 0 0 1px rgba(0,0,0,.08)",
+                "box-shadow:inset 0 0 0 1px rgba(var(--swatchInk),.08)",
               title: r.hex,
               onClick: () => actions.onUseHex(r.hex),
             });

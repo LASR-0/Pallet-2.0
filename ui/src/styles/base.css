@@ -31,14 +31,46 @@ body {
 #app {
   width: 100%;
   height: 100%;
+  /* The gutter the shell's shadow falls into. See `--shell-pad` in tokens.css;
+     the window is sized to absorb it, so the shell itself keeps its 440px. */
+  padding: var(--shell-pad, 12px);
+}
+
+/*
+ * The window's frame: 2px of the signature colour, deepened and at half
+ * opacity, drawn over the whole shell.
+ *
+ * An overlay rather than a `border`, so it costs no layout and the chrome runs
+ * right up to the glass — and rather than an `inset` box-shadow, which paints
+ * beneath the element's own children and so was hidden behind the opaque title
+ * bar and tab strip for the top third of the window.
+ *
+ * `border-radius: inherit` follows `--shell-rad`, which is zero where a tiling
+ * compositor rounds the window itself. The z-index clears the Clear pill's 2
+ * and the Current screen's absolutely positioned name badge; `pointer-events`
+ * keeps a frame drawn over the close button from swallowing clicks on it.
+ */
+.pl-shell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 2px solid var(--shellEdge);
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 5;
 }
 
 /* Scrollbar, verbatim from the prototype's .pl-scroll rules. */
 .pl-scroll::-webkit-scrollbar {
   width: 9px;
 }
+/* The thumb is the window's own frame colour rather than the prototype's
+   neutral grey: it runs parallel to the right-hand edge a few pixels inside
+   it, so anything else put two unrelated verticals next to each other. At half
+   the frame's opacity, so it stays a position marker rather than competing
+   with the boundary it sits beside. */
 .pl-scroll::-webkit-scrollbar-thumb {
-  background: rgba(128, 128, 128, 0.32);
+  background: var(--shellEdgeFaint);
   border-radius: 9px;
 }
 .pl-scroll::-webkit-scrollbar-track {
@@ -61,22 +93,24 @@ body {
   background: var(--hover);
   color: var(--ink);
 }
-/* A wash rather than a block, and red rather than the accent: this is the one
-   control on the chrome that throws work away. */
+/* A solid fill and a glyph in `--dangerInk`, which is how the selected tab and
+   the Clear pill already say they are the live control — in `--danger` rather
+   than the accent, because this is the one thing on the chrome that throws
+   work away.
+   It was a translucent wash with a dark red glyph on top — the only
+   translucent hover in the window, and much the most tentative way to state
+   the most consequential button. The two tokens that fed it, `--dangerSoft`
+   and `--dangerDark`, went with it and are not defined any more. */
 .hv-close:hover {
-  background: var(--dangerSoft);
-  color: var(--dangerDark);
+  background: var(--danger);
+  color: var(--dangerInk);
 }
 
-/* `non-scaling-stroke` keeps these in rendered pixels: the icon draws a 16-unit
-   box into 13px, so without it a stroke-width of 3 would arrive as 2.4. */
+/* `non-scaling-stroke` keeps this in rendered pixels: the icon draws a 16-unit
+   box into 12px, so without it a stroke-width of 1.6 would arrive as 1.2. */
 .hv-close svg path {
-  stroke-width: 1.5px;
+  stroke-width: 1.6px;
   vector-effect: non-scaling-stroke;
-  transition: stroke-width 0.12s ease;
-}
-.hv-close:hover svg path {
-  stroke-width: 3px;
 }
 .hv-row:hover {
   background: var(--panelHi);
@@ -98,6 +132,46 @@ body {
 
 .clickable {
   cursor: pointer;
+}
+
+/* One colour in the Build strip. Hovering rings it and brings up its remove
+   chip, so the strip says what clicking does rather than leaving it to the
+   tooltip. The ring is the accent and the chip's cross is `--danger`: the ring
+   only marks which colour the pointer is on, which is not itself destructive,
+   and a red bar sweeping along the palette as the pointer crossed it read as
+   an alarm rather than as a highlight. The cross is where the warning belongs.
+
+   An inset ring, because the segments are flush and anything drawn outside one
+   would land on its neighbours. The end segments carry the container's radius
+   (see build.ts) so the ring follows the corner it sits in. */
+.pl-slot {
+  transition: box-shadow 0.14s ease;
+}
+.pl-slot:hover {
+  box-shadow: inset 0 0 0 3px var(--accent);
+}
+.pl-slot:hover > div {
+  opacity: 1;
+}
+
+/* The panel at the end of the strip that starts a pick. A wash of the accent
+   at rest so it reads as part of the palette rather than as a button parked on
+   the end of it, and more of the accent under the pointer. */
+.pl-tail {
+  transition:
+    background 0.14s ease,
+    color 0.14s ease;
+}
+.pl-tail:hover {
+  background: var(--accentSoft);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pl-slot,
+  .pl-tail,
+  .pl-slot > div {
+    transition: none;
+  }
 }
 
 /* The filter carousel. Its own scrollbar would sit under the fading pills and
@@ -141,11 +215,15 @@ body {
   border-color: var(--accent);
 }
 
-/* Clear, sitting over the faded left edge of the filter rail. It fills on
-   hover rather than just brightening: it undoes work, so it should feel like a
-   button rather than another tag. */
+/* Clear, sitting over the faded left edge of the filter rail. Filled with the
+   accent and lettered in white, matching the selected tab: it undoes work, so
+   it reads as a button rather than as another tag. The border is the fill's own
+   colour — invisible, and there only so the pill keeps the geometry it had as
+   an outline. */
 .pl-clear {
-  color: var(--accent);
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accentInk);
   transition:
     background 0.14s ease,
     border-color 0.14s ease;
@@ -167,10 +245,13 @@ body {
 .pl-clear.pl-pop {
   animation: pl-pop-centred 0.16s cubic-bezier(0.2, 0.9, 0.3, 1.2);
 }
-/* A tint, keeping the accent text. A solid accent fill needs white or black
-   on top, and neither clears 3:1 against either theme's accent. */
+/* Already filled at rest, so hover has to go the other way: down to
+   `--accentDeep`, which also takes `--accentInk` from about 2.9:1 to 5.5:1 on
+   Sketchbook, where that ink is white — the one state where the label is
+   genuinely comfortable. */
 .pl-clear:hover {
-  background: var(--accentSoft);
+  background: var(--accentDeep);
+  border-color: var(--accentDeep);
 }
 
 /* Chips that do something on click: the export formats. The
@@ -196,8 +277,7 @@ body {
     animation: none;
   }
   .pl-pill,
-  .pl-clear,
-  .hv-close svg path {
+  .pl-clear {
     transition: none;
   }
   .hv-copy {

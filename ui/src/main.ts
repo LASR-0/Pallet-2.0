@@ -7,13 +7,24 @@ import { renderCurrent } from "./screens/current";
 import { installMenuDismiss } from "./menu";
 import { installTooltips } from "./tooltip";
 import { renderBuild } from "./screens/build";
+import { previewPairs } from "./screens/preview";
 import { renderPick } from "./screens/pick";
 import { renderSettings } from "./screens/settings";
 import { renderColours, renderPalettes } from "./screens/library";
 import { focusSearch } from "./screens/search";
-import { comboFromEvent, matches } from "./keys";
+import { comboFromEvent, displayCombo, matches } from "./keys";
 import { renderShell } from "./shell";
-import { TABS, type AppState, type Harmony, type Screen } from "./state";
+import {
+  TABS,
+  formatToken,
+  parseToken,
+  type AppState,
+  type Harmony,
+  type ImportKind,
+  type Screen,
+  type ShareReport,
+} from "./state";
+import type { ImportActions } from "./screens/library";
 
 const state: AppState = {
   screen: "current",
@@ -27,6 +38,11 @@ const state: AppState = {
   sorts: { palettes: "added", colours: "added" },
   build: {
     colours: [],
+    tokens: [],
+    roles: {},
+    medium: null,
+    verdicts: null,
+    choosingRole: null,
     name: "",
     suggested: "Untitled",
     needsName: false,
@@ -43,6 +59,8 @@ const state: AppState = {
   bindings: null,
   capturing: null,
   naming: null,
+  importing: null,
+  share: { dir: null, files: null, notice: null, busy: false },
 };
 
 const root = document.getElementById("app");
@@ -58,7 +76,9 @@ function body(): HTMLElement {
         onKeep: (hex) => void keepColour(hex),
       });
     case "pick":
-      return renderPick(state.recents, "CTRL + SHIFT + P", state.picking, {
+      // Read from the bindings, not written in: the shortcut is remappable in
+      // Settings, and a hard-coded caption went on naming the old keys.
+      return renderPick(state.recents, displayCombo(binding("pick")), state.picking, {
         onPick: () => void pickFromScreen(),
         onUseHex: (hex) => void goToColor(hex),
         onSaveHex: (hex) => void mutate(() => api.saveColour(hex)),
@@ -74,12 +94,14 @@ function body(): HTMLElement {
           onRenamePalette: (id, name) =>
             void mutate(() => api.renamePalette(id, name)),
           onDeletePalette: (id) => void mutate(() => api.deletePalette(id)),
+          onCopy: copy,
           facets: state.facets.palettes,
           sort: state.sorts.palettes,
           onToggleFacet: (id) => toggleFacet("palettes", id),
           onClearFacets: () => clearFacets("palettes"),
           onSort: (id) => setSort("palettes", id),
         },
+        state.importing?.kind === "palette" ? importActions() : null,
       );
     case "colours":
       return renderColours(
@@ -103,6 +125,7 @@ function body(): HTMLElement {
             render();
           },
         },
+        state.importing?.kind === "colour" ? importActions() : null,
       );
     case "build":
       return renderBuild(state.build, {
@@ -110,8 +133,46 @@ function body(): HTMLElement {
         onSave: () => void savePalette(),
         onRemove: (index) => {
           state.build.colours.splice(index, 1);
+          // The token goes with the colour it named. Leaving it behind would
+          // slide every name below it up onto the wrong swatch.
+          state.build.tokens.splice(index, 1);
           state.build.error = null;
           render();
+          // A removed colour may have been filling a role, which changes which
+          // pairings exist. Roles themselves need no tidying — they are held
+          // by hex and resolved against the palette when drawn.
+          void judgeRoles();
+        },
+        onToken: (index, text) => {
+          state.build.tokens[index] = text;
+          // Deliberately no re-render: the field updates itself, and replacing
+          // it mid-word would lose the caret — the same bargain the search
+          // field and the palette name field make.
+        },
+        onImport: (kind) => beginImport(kind),
+        onMedium: (medium) => {
+          if (medium === state.build.medium) return;
+          state.build.medium = medium;
+          // The two media have different roles, so an assignment made under
+          // one means nothing under the other — `background` is the only name
+          // they share, and it is not the same slot.
+          state.build.roles = {};
+          state.build.verdicts = null;
+          state.build.choosingRole = null;
+          render();
+        },
+        onChooseRole: (role) => {
+          state.build.choosingRole = role;
+          render();
+        },
+        onAssignRole: (role, hex) => {
+          if (hex === null) delete state.build.roles[role];
+          else state.build.roles[role] = hex;
+          // Assigning closes the chooser: the next thing the user wants is to
+          // see the card, not to keep staring at the palette they just used.
+          state.build.choosingRole = null;
+          render();
+          void judgeRoles();
         },
         onRename: (name) => {
           state.build.name = name;
@@ -122,14 +183,23 @@ function body(): HTMLElement {
         onExport: (format) => void exportPalette(format),
       });
     case "settings":
-      return renderSettings(state.settings, state.bindings, state.capturing, {
-        onCycle: (key) => void cycleSetting(key),
-        onCapture: (key) => {
-          // Arm capture; the next keypress becomes the binding.
-          state.capturing = state.capturing === key ? null : key;
-          render();
+      return renderSettings(
+        state.settings,
+        state.bindings,
+        state.capturing,
+        state.share,
+        {
+          onCycle: (key) => void cycleSetting(key),
+          onCapture: (key) => {
+            // Arm capture; the next keypress becomes the binding.
+            state.capturing = state.capturing === key ? null : key;
+            render();
+          },
+          onShare: () => void shareLibrary(),
+          onImport: (path) => void importLibrary(path),
+          onCopyPath: (path) => void api.copyText(path),
         },
-      });
+      );
   }
 }
 
@@ -147,11 +217,35 @@ function searchActions(screen: "palettes" | "colours") {
   };
 }
 
+/**
+ * The screen the last render drew, so the next one knows whether the user is
+ * still looking at the same page or has moved to another.
+ */
+let rendered: Screen | null = null;
+
+/**
+ * Redraw the window.
+ *
+ * Every interaction in this app re-renders the whole screen, which replaces
+ * the scroll container along with everything else — and a new element starts
+ * at the top. Anything below the fold therefore threw the page back to the
+ * beginning whenever it was touched: assigning a role, arming a key binding,
+ * removing a colour. The offset is carried across so the page stays where the
+ * user left it.
+ *
+ * Only within one screen. Switching tabs *should* start at the top, since it
+ * is a different page and landing halfway down it would be the real surprise.
+ */
 function render(): void {
   document.documentElement.setAttribute("data-theme", state.theme);
+
+  const before = root!.querySelector<HTMLElement>(".pl-scroll");
+  const offset = state.screen === rendered ? (before?.scrollTop ?? 0) : 0;
+
   root!.replaceChildren(
     renderShell(state, body(), {
       onTab: (screen: Screen) => {
+        leavingScreen(screen);
         state.screen = screen;
         render();
         // The library is read on demand, then kept: it only changes when the
@@ -160,11 +254,22 @@ function render(): void {
         if (screen === "colours" && state.colours === null) void loadColours();
         if (screen === "pick" && state.recents === null) void loadRecents();
         if (screen === "settings" && state.settings === null) void loadSettings();
+        // Always, not only when unread: see `loadShare`.
+        if (screen === "settings") void loadShare();
       },
       onMinimise: () => void getCurrentWindow().minimize(),
       onClose: () => void getCurrentWindow().close(),
     }),
   );
+
+  // Assigning `scrollTop` forces the layout it needs, and a value past the new
+  // content's height clamps itself — which is the right answer when a render
+  // made the page shorter.
+  if (offset > 0) {
+    const after = root!.querySelector<HTMLElement>(".pl-scroll");
+    if (after) after.scrollTop = offset;
+  }
+  rendered = state.screen;
 }
 
 /** Pick from the Pick screen: the colour opens on Current. */
@@ -220,6 +325,93 @@ async function loadSettings(): Promise<void> {
   render();
 }
 
+/**
+ * Re-read the shared folder.
+ *
+ * Unlike the library, this is read every time Settings is opened rather than
+ * cached: the folder is the interface, and the whole point of it is that
+ * something may have been dropped in there from outside Pallet since last
+ * time. A stale list would be a list that cannot show the file the user just
+ * put there, which is precisely the case it exists for.
+ */
+async function loadShare(): Promise<void> {
+  state.share.dir = await api.sharedDir().catch(() => null);
+  state.share.files = await api.sharedLibraries().catch(() => []);
+  render();
+}
+
+/** Write this library out to the shared folder. */
+async function shareLibrary(): Promise<void> {
+  if (state.share.busy) return;
+  state.share.busy = true;
+  state.share.notice = null;
+  render();
+
+  try {
+    const path = await api.shareLibrary();
+    const name = path.split(/[\\/]/).pop() ?? path;
+    state.share.notice = `Wrote ${name}. Send that file to anyone else running Pallet.`;
+  } catch (e) {
+    state.share.notice = String(e);
+  } finally {
+    state.share.busy = false;
+  }
+  // Reload rather than push the new file onto the list: the backend decides
+  // the name, and it is the one that has just seen the folder.
+  await loadShare();
+}
+
+/**
+ * Take a shared library in.
+ *
+ * Everything the library screens hold is dropped afterwards, because a merge
+ * can add to both of them and a cached list would show the user a library
+ * that no longer matches the one they have.
+ */
+async function importLibrary(path: string): Promise<void> {
+  if (state.share.busy) return;
+  state.share.busy = true;
+  state.share.notice = null;
+  render();
+
+  try {
+    const report = await api.importLibrary(path);
+    state.share.notice = shareSummary(report);
+    state.palettes = null;
+    state.colours = null;
+  } catch (e) {
+    state.share.notice = String(e);
+  } finally {
+    state.share.busy = false;
+  }
+  await loadShare();
+}
+
+/** What an import did, as a sentence. */
+function shareSummary(report: ShareReport): string {
+  const added: string[] = [];
+  if (report.coloursAdded) added.push(plural(report.coloursAdded, "colour"));
+  if (report.palettesAdded) added.push(plural(report.palettesAdded, "palette"));
+
+  if (added.length === 0) {
+    // The merge succeeded and wrote nothing, which is what re-importing a file
+    // you already have looks like. Said plainly, or it reads as a failure.
+    return "Nothing new — you already have everything in that file.";
+  }
+
+  let text = `Added ${added.join(" and ")}.`;
+  const known = report.coloursKnown + report.palettesKnown;
+  if (known) text += ` ${known} you already had ${known === 1 ? "was" : "were"} left alone.`;
+  if (report.membersDropped) {
+    text += ` ${plural(report.membersDropped, "palette slot")} named a colour that was not in the file and had to be skipped.`;
+  }
+  return text;
+}
+
+function plural(n: number, noun: string): string {
+  return `${n} ${noun}${n === 1 ? "" : "s"}`;
+}
+
 /** Read the bindings without re-rendering, for the shortcut handler. */
 function binding(key: string): string {
   return state.bindings?.find((b) => b.key === key)?.combo ?? "";
@@ -269,9 +461,14 @@ async function pickNext(): Promise<void> {
 
   try {
     const taken = await api.pickColour([...state.build.colours]);
-    state.build.colours.push(
-      ...taken.slice(0, state.build.capacity - state.build.colours.length),
+    const added = taken.slice(
+      0,
+      state.build.capacity - state.build.colours.length,
     );
+    state.build.colours.push(...added);
+    // New colours arrive unnamed. Padding here rather than at the point of
+    // use keeps the two arrays the same length everywhere else.
+    state.build.tokens.push(...added.map(() => ""));
     // Those colours are now in the pick history too, so the cached list is
     // stale even though the Build screen is what the user is looking at.
     if (taken.length > 0) state.recents = null;
@@ -290,12 +487,163 @@ async function exportPalette(format: string): Promise<void> {
       paletteName(),
       state.build.colours,
       format,
+      state.build.tokens.map(parseToken),
     );
     state.build.error = null;
   } catch (e) {
     state.build.exported = null;
     state.build.error = String(e);
   }
+  render();
+}
+
+// --- importing from the library ---------------------------------------------
+//
+// Build sends the user to the library to fetch something, and the library
+// hands it back. The selection lives here rather than on either screen because
+// it belongs to neither: it is the errand itself.
+
+/** Send the user to the library to choose what to bring back. */
+function beginImport(kind: ImportKind): void {
+  state.importing = { kind, selected: [] };
+  state.screen = kind === "palette" ? "palettes" : "colours";
+  render();
+  if (kind === "palette" && state.palettes === null) void loadPalettes();
+  if (kind === "colour" && state.colours === null) void loadColours();
+}
+
+/** Give up and go back with nothing. */
+function cancelImport(): void {
+  state.importing = null;
+  state.screen = "build";
+  render();
+}
+
+/**
+ * Drop an import the user has walked away from.
+ *
+ * Switching tabs mid-errand abandons it: the banner would otherwise be left
+ * behind on a screen nobody is looking at, and coming back to that screen
+ * later would silently resume a selection made for a palette that may since
+ * have been saved and cleared. Called from both ways of changing screen.
+ */
+function leavingScreen(next: Screen): void {
+  if (!state.importing) return;
+  const home = state.importing.kind === "palette" ? "palettes" : "colours";
+  if (next !== home) state.importing = null;
+}
+
+/** Ctrl-click: add to the selection, or take it back out, and stay here. */
+function toggleImportPick(id: string): void {
+  const importing = state.importing;
+  if (!importing) return;
+  const at = importing.selected.indexOf(id);
+  if (at >= 0) importing.selected.splice(at, 1);
+  else importing.selected.push(id);
+  render();
+}
+
+/**
+ * Plain click: the selection is over.
+ *
+ * The clicked row joins it first, unless it is already in — so a single click
+ * with nothing chosen takes one thing, and a click after several ctrl-clicks
+ * takes those and this one too. Clicking something already chosen just ends
+ * the selection, which is the natural way to say "that's all" once the thing
+ * you wanted last is already ringed.
+ */
+function finishImport(id: string): void {
+  const importing = state.importing;
+  if (!importing) return;
+  const ids = [...importing.selected];
+  if (!ids.includes(id)) ids.push(id);
+  applyImport(importing.kind, ids);
+}
+
+/** Put what was chosen into the palette being built, and go back to it. */
+function applyImport(kind: ImportKind, ids: string[]): void {
+  const hexes: string[] = [];
+  const tokens: string[] = [];
+
+  if (kind === "palette") {
+    for (const id of ids) {
+      const card = state.palettes?.find((p) => p.id === id);
+      if (!card) continue;
+      hexes.push(...card.colors);
+      // A saved palette carries what its members were called, so the tokens
+      // come across with the colours rather than arriving blank.
+      tokens.push(
+        ...card.colors.map((_, i) =>
+          formatToken(card.tokens[i] ?? { group: null, name: null }),
+        ),
+      );
+    }
+  } else {
+    for (const id of ids) {
+      const chip = state.colours?.find((c) => c.id === id);
+      if (!chip) continue;
+      hexes.push(chip.hex);
+      // Deliberately no token. A library name is what the colour is called in
+      // the library, not what it should be called in this palette's exports —
+      // and `with_suggested_names` already fills that in on the way out.
+      tokens.push("");
+    }
+  }
+
+  // Appending, not replacing: this was reached from the empty slot at the end
+  // of the strip, which is the place that means "and then this one".
+  const room = state.build.capacity - state.build.colours.length;
+  const taken = Math.max(0, room);
+  state.build.colours.push(...hexes.slice(0, taken));
+  state.build.tokens.push(...tokens.slice(0, taken));
+
+  const dropped = hexes.length - taken;
+  state.build.error =
+    dropped > 0
+      ? `${dropped} colour${dropped === 1 ? "" : "s"} did not fit — a palette holds ${state.build.capacity}`
+      : null;
+
+  state.importing = null;
+  state.screen = "build";
+  render();
+  // New colours can complete a pairing that was half-assigned before.
+  void judgeRoles();
+}
+
+/** The handlers a library screen needs while an import is running. */
+function importActions(): ImportActions | null {
+  if (!state.importing) return null;
+  return {
+    state: state.importing,
+    onToggle: toggleImportPick,
+    onFinish: finishImport,
+    onCancel: cancelImport,
+  };
+}
+
+/**
+ * Ask the backend what the preview's pairings come to.
+ *
+ * Called whenever the roles change and whenever a colour leaves the palette,
+ * since either can make a pairing appear or vanish. Failure clears the
+ * verdicts rather than leaving the last set on screen: stale contrast figures
+ * describing colours that are no longer paired are worse than none.
+ */
+async function judgeRoles(): Promise<void> {
+  const pairs = previewPairs(
+    state.build.medium,
+    state.build.roles,
+    state.build.colours,
+  );
+  if (pairs.length === 0) {
+    state.build.verdicts = null;
+    render();
+    return;
+  }
+  state.build.verdicts = await api.contrastPairs(pairs).catch((e) => {
+    tracing(String(e));
+    return null;
+  });
   render();
 }
 
@@ -321,8 +669,20 @@ async function savePalette(): Promise<void> {
   }
 
   try {
-    await api.savePalette(paletteName(), state.build.colours);
+    await api.savePalette(
+      paletteName(),
+      state.build.colours,
+      state.build.tokens.map(parseToken),
+    );
     state.build.colours = [];
+    state.build.tokens = [];
+    // Roles belong to the palette that has just left the screen. Carrying
+    // them over would point every one of them at colours the next palette
+    // does not contain.
+    state.build.roles = {};
+    state.build.medium = null;
+    state.build.verdicts = null;
+    state.build.choosingRole = null;
     state.build.error = null;
     state.build.exported = null;
     state.build.name = "";
@@ -406,8 +766,14 @@ async function reload(screen: "palettes" | "colours"): Promise<void> {
   else await loadColours();
 }
 
+/**
+ * Copy, through the backend.
+ *
+ * Every COPY chip, context-menu item and click-to-copy swatch comes here, so
+ * there is one clipboard path rather than one per platform's quirks.
+ */
 function copy(value: string): void {
-  void navigator.clipboard.writeText(value);
+  void api.copyText(value).catch((e) => tracing(String(e)));
 }
 
 /** Choosing a swatch from the library opens it on Current. */
@@ -435,6 +801,16 @@ async function setHarmony(harmony: Harmony): Promise<void> {
  */
 function installShortcuts(): void {
   window.addEventListener("keydown", (event) => {
+    // An import has the user somewhere they did not navigate to, so Escape
+    // has to be the way back — and it takes precedence over the library
+    // screen's own Escape, which only clears the search field.
+    if (state.importing && event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      cancelImport();
+      return;
+    }
+
     // Capturing a new binding swallows everything until a real key arrives.
     if (state.capturing) {
       event.preventDefault();
@@ -492,12 +868,14 @@ function installShortcuts(): void {
     const index = Number(event.key) - 1;
     const tab = TABS[index];
     if (!tab) return;
+    leavingScreen(tab[0]);
     state.screen = tab[0];
     render();
     if (state.screen === "palettes" && state.palettes === null) void loadPalettes();
     if (state.screen === "colours" && state.colours === null) void loadColours();
     if (state.screen === "pick" && state.recents === null) void loadRecents();
     if (state.screen === "settings" && state.settings === null) void loadSettings();
+    if (state.screen === "settings") void loadShare();
   });
 }
 
@@ -513,11 +891,42 @@ async function applyBinding(key: string, combo: string): Promise<void> {
   await loadSettings();
 }
 
+/**
+ * Taking in a shared library dropped on the window.
+ *
+ * The shared folder is the documented route, but it asks the user to move a
+ * file there before Pallet will look at it, and the file has almost always
+ * just arrived somewhere else. Dropping it is the same operation without that
+ * step, so it goes straight to the same merge.
+ *
+ * Only `.pallet` files. Anything else dropped is ignored rather than refused:
+ * a window that argues with you about a file you did not mean to drop on it is
+ * worse than one that does nothing.
+ */
+async function installFileDrop(): Promise<void> {
+  const { getCurrentWebview } = await import("@tauri-apps/api/webview");
+  await getCurrentWebview().onDragDropEvent((event) => {
+    if (event.payload.type !== "drop") return;
+    const path = event.payload.paths.find((p) =>
+      p.toLowerCase().endsWith(".pallet"),
+    );
+    if (!path) return;
+
+    // Straight to Settings, where the result is reported. Dropping a file and
+    // being told nothing — on Pick, say — would look like it failed.
+    leavingScreen("settings");
+    state.screen = "settings";
+    if (state.settings === null) void loadSettings();
+    void importLibrary(path);
+  });
+}
+
 async function start(): Promise<void> {
   render();
   installShortcuts();
   installMenuDismiss();
   installTooltips();
+  void installFileDrop();
 
   // A tiling compositor rounds its own windows; drawing ours on top of that
   // gives a double corner at two curvatures.

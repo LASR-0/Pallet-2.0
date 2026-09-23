@@ -215,12 +215,23 @@ fn main() -> Result<()> {
             let format = pallet_export::Format::parse(&format)
                 .with_context(|| format!("`{format}` is not a format Pallet writes"))?;
 
+            // The stored token wins over the colour's library name: it says
+            // what this colour is called *in this palette*, which is the whole
+            // point of having named it there. A member with no token falls
+            // back to the library name, and then to a nearest match below.
             let swatches = found
                 .colours
                 .iter()
-                .map(|c| pallet_export::Swatch {
-                    color: c.color,
-                    name: c.name.clone(),
+                .enumerate()
+                .map(|(i, c)| {
+                    let token = found.tokens.get(i);
+                    pallet_export::Swatch {
+                        color: c.color,
+                        name: token
+                            .and_then(|t| t.name.clone())
+                            .or_else(|| c.name.clone()),
+                        group: token.and_then(|t| t.group.clone()),
+                    }
                 })
                 .collect();
             let exported =

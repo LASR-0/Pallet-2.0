@@ -17,7 +17,14 @@ type Attrs = {
    * which on Linux means the GTK theme rather than this app's.
    */
   title?: string;
-  onClick?: () => void;
+  /**
+   * Click handler.
+   *
+   * Receives the event, for the handful of places that need a modifier —
+   * ctrl-click to add to a selection rather than replace it. Handlers that do
+   * not care simply ignore the argument.
+   */
+  onClick?: (event: MouseEvent) => void;
   text?: string;
   /**
    * Marks the element as a window-drag handle.
@@ -43,7 +50,7 @@ export function el(
   if (attrs.text !== undefined) node.textContent = attrs.text;
   if (attrs.onClick) {
     const handler = attrs.onClick;
-    node.addEventListener("click", () => handler());
+    node.addEventListener("click", (event) => handler(event as MouseEvent));
     node.classList.add("clickable");
   }
   for (const child of children) {
@@ -51,6 +58,21 @@ export function el(
     node.append(child);
   }
   return node;
+}
+
+/**
+ * The transparent gutter between the viewport and the shell, in pixels.
+ *
+ * `--shell-pad` in tokens.css keeps a margin around the window for its shadow
+ * to fall into, so the viewport is larger than the visible window on every
+ * side. Anything positioned against the viewport — the tooltip, the context
+ * menu — has to subtract this or it lands out in the glass.
+ */
+export function gutter(): number {
+  const value = getComputedStyle(document.documentElement).getPropertyValue(
+    "--shell-pad",
+  );
+  return Number.parseFloat(value) || 0;
 }
 
 /** A flex spacer, the prototype's `<div style="flex:1">`. */

@@ -1,7 +1,7 @@
 //! Library CRUD, ordering, cascades and migrations.
 
 use pallet_color::Color;
-use pallet_store::{NewColour, Store};
+use pallet_store::{Member, NewColour, Store, Token};
 
 fn store() -> Store {
     Store::open_in_memory().expect("in-memory library")
@@ -11,10 +11,15 @@ fn colour(hex: &str) -> NewColour {
     NewColour::new(Color::parse_hex(hex).unwrap())
 }
 
+/// How many migrations there are. Bump with each one appended; the point of
+/// asserting it is to notice a migration going missing, so it is stated here
+/// rather than read back from the thing under test.
+const SCHEMA_VERSION: i64 = 2;
+
 #[test]
 fn migrations_apply_and_report_a_version() {
     let s = store();
-    assert_eq!(s.schema_version().unwrap(), 1);
+    assert_eq!(s.schema_version().unwrap(), SCHEMA_VERSION);
 }
 
 #[test]
@@ -30,7 +35,7 @@ fn migrations_are_idempotent_across_reopens() {
 
     // Reopening must migrate cleanly and preserve everything.
     let s = Store::open(&path).unwrap();
-    assert_eq!(s.schema_version().unwrap(), 1);
+    assert_eq!(s.schema_version().unwrap(), SCHEMA_VERSION);
     assert_eq!(
         s.colour(&id).unwrap().unwrap().name.as_deref(),
         Some("Disco")
@@ -266,4 +271,158 @@ fn seeded_colours_keep_the_prototypes_order() {
     assert_eq!(named.first().map(String::as_str), Some("Dim Red"));
     assert_eq!(named.last().map(String::as_str), Some("Rob Roy"));
     assert_eq!(named.len(), 9);
+}
+
+// --- export tokens ----------------------------------------------------------
+
+#[test]
+fn a_member_keeps_the_token_it_was_saved_with() {
+    let s = store();
+    let a = s.add_colour(&colour("#A5236E")).unwrap();
+    let b = s.add_colour(&colour("#E8564C")).unwrap();
+    let c = s.add_colour(&colour("#289788")).unwrap();
+
+    let pid = s
+        .create_palette_with(
+            "Tokened",
+            &[
+                Member {
+                    colour_id: a.clone(),
+                    token: Token {
+                        group: Some("brand".into()),
+                        name: Some("primary".into()),
+                    },
+                },
+                Member {
+                    colour_id: b.clone(),
+                    token: Token {
+                        group: None,
+                        name: Some("loose".into()),
+                    },
+                },
+                Member::new(c.clone()),
+            ],
+        )
+        .unwrap();
+
+    let p = s.palette(&pid).unwrap().unwrap();
+    assert_eq!(p.colours.len(), 3);
+    assert_eq!(p.tokens.len(), p.colours.len(), "index-parallel");
+
+    assert_eq!(p.tokens[0].group.as_deref(), Some("brand"));
+    assert_eq!(p.tokens[0].name.as_deref(), Some("primary"));
+    // A name with no group is a token; a group is not required.
+    assert_eq!(p.tokens[1].group, None);
+    assert_eq!(p.tokens[1].name.as_deref(), Some("loose"));
+    // A member never named carries nothing, and the exporters fall back.
+    assert!(p.tokens[2].is_empty());
+
+    // The colours themselves are untouched: a token belongs to the membership.
+    assert_eq!(p.colours[0].color.to_hex(), "#A5236E");
+    assert!(s.colour(&a).unwrap().unwrap().name.is_none());
+}
+
+#[test]
+fn a_blank_token_field_is_stored_as_absent_not_as_an_empty_name() {
+    // The UI hands back whatever is in the field, and a cleared one arrives as
+    // Some(""). Kept, that would be a token whose name is nothing.
+    let s = store();
+    let id = s.add_colour(&colour("#A5236E")).unwrap();
+    let pid = s
+        .create_palette_with(
+            "Blanks",
+            &[Member {
+                colour_id: id,
+                token: Token {
+                    group: Some("   ".into()),
+                    name: Some("".into()),
+                },
+            }],
+        )
+        .unwrap();
+
+    let p = s.palette(&pid).unwrap().unwrap();
+    assert!(p.tokens[0].is_empty(), "{:?}", p.tokens[0]);
+}
+
+#[test]
+fn the_same_colour_carries_a_different_token_in_each_palette() {
+    // The reason tokens live on the membership rather than on the colour.
+    let s = store();
+    let id = s.add_colour(&colour("#A5236E")).unwrap();
+
+    let one = s
+        .create_palette_with(
+            "One",
+            &[Member {
+                colour_id: id.clone(),
+                token: Token {
+                    group: Some("brand".into()),
+                    name: Some("primary".into()),
+                },
+            }],
+        )
+        .unwrap();
+    let two = s
+        .create_palette_with(
+            "Two",
+            &[Member {
+                colour_id: id.clone(),
+                token: Token {
+                    group: Some("surface".into()),
+                    name: Some("accent".into()),
+                },
+            }],
+        )
+        .unwrap();
+
+    assert_eq!(
+        s.palette(&one).unwrap().unwrap().tokens[0].name.as_deref(),
+        Some("primary")
+    );
+    assert_eq!(
+        s.palette(&two).unwrap().unwrap().tokens[0].name.as_deref(),
+        Some("accent")
+    );
+}
+
+#[test]
+fn replacing_the_membership_replaces_its_tokens_too() {
+    let s = store();
+    let a = s.add_colour(&colour("#A5236E")).unwrap();
+    let b = s.add_colour(&colour("#E8564C")).unwrap();
+
+    let pid = s
+        .create_palette_with(
+            "Swap",
+            &[Member {
+                colour_id: a,
+                token: Token {
+                    group: Some("brand".into()),
+                    name: Some("primary".into()),
+                },
+            }],
+        )
+        .unwrap();
+
+    // The plain path drops tokens, which is what it says it does.
+    s.set_palette_colours(&pid, &[b]).unwrap();
+    let p = s.palette(&pid).unwrap().unwrap();
+    assert_eq!(p.colours.len(), 1);
+    assert!(p.tokens[0].is_empty());
+}
+
+#[test]
+fn a_palette_saved_before_tokens_existed_still_loads() {
+    // The upgrade path for a library already on disk: 0002 adds two columns,
+    // and every row written before it has NULL in both.
+    let s = store();
+    let a = s.add_colour(&colour("#A5236E")).unwrap();
+    let b = s.add_colour(&colour("#E8564C")).unwrap();
+    let pid = s.create_palette("Old", &[a, b]).unwrap();
+
+    let p = s.palette(&pid).unwrap().unwrap();
+    assert_eq!(p.colours.len(), 2);
+    assert_eq!(p.tokens.len(), 2);
+    assert!(p.tokens.iter().all(|t| t.is_empty()));
 }

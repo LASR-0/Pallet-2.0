@@ -10,7 +10,7 @@
 
 use pallet_color::{Color, Harmony, Space, contrast, naming, ramp};
 use pallet_store::{Config, Store};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::Manager;
 
 /// One row of the HEX / RGB / HSL block.
@@ -465,6 +465,21 @@ struct PaletteCard {
     /// "5 · 2019" — swatch count and the year it was created.
     meta: String,
     colors: Vec<String>,
+    /// What each member is called, index-parallel with `colors`.
+    ///
+    /// Carried on the card rather than fetched when a palette is opened on
+    /// Build: the library list is already loaded and cached by then, and a
+    /// palette holds at most twenty-five of these, so a second round trip to
+    /// collect them would cost more than sending them costs.
+    tokens: Vec<TokenOut>,
+}
+
+/// A stored token on its way to the frontend.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TokenOut {
+    group: Option<String>,
+    name: Option<String>,
 }
 
 /// A colour as the Colours screen shows it.
@@ -500,6 +515,14 @@ fn palettes(
             num: format!("{:02}", i + 1),
             meta: format!("{} · {}", p.colours.len(), p.created_at.year()),
             colors: p.colours.iter().map(|c| c.color.to_hex()).collect(),
+            tokens: p
+                .tokens
+                .iter()
+                .map(|t| TokenOut {
+                    group: t.group.clone(),
+                    name: t.name.clone(),
+                })
+                .collect(),
             id: p.id,
             name: p.name,
         })
@@ -879,14 +902,72 @@ fn next_palette_name(state: tauri::State<'_, AppState>) -> Result<String, String
     Ok(format!("Untitled {}", count + 1))
 }
 
+/// What a palette member is called when it is exported: `brand/primary`.
+///
+/// Sent alongside the hexes and index-parallel with them, short of the end: a
+/// palette the user has not named at all sends none of these, and one they
+/// have named halfway through sends only as many as it has. Every missing
+/// entry is an absent token, which is what a colour arrived with before token
+/// sets existed.
+#[derive(Debug, Default, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TokenInput {
+    group: Option<String>,
+    name: Option<String>,
+}
+
+impl From<&TokenInput> for pallet_store::Token {
+    fn from(input: &TokenInput) -> Self {
+        Self {
+            group: input.group.clone(),
+            name: input.name.clone(),
+        }
+    }
+}
+
+/// Turn the hexes and tokens the Build screen sends into export swatches.
+///
+/// A token's name becomes the swatch name, so every format's existing naming
+/// path carries it; a member with no token keeps `None` and is filled in by
+/// `with_suggested_names` exactly as before.
+fn swatches_from(
+    hexes: &[String],
+    tokens: &[TokenInput],
+) -> Result<Vec<pallet_export::Swatch>, String> {
+    hexes
+        .iter()
+        .enumerate()
+        .map(|(i, hex)| {
+            let color = Color::parse_hex(hex).map_err(|e| e.to_string())?;
+            let token = tokens.get(i);
+            Ok(pallet_export::Swatch {
+                color,
+                name: token.and_then(|t| non_blank(t.name.as_deref())),
+                group: token.and_then(|t| non_blank(t.group.as_deref())),
+            })
+        })
+        .collect()
+}
+
+/// A field the user left empty, treated as absent.
+fn non_blank(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(str::to_owned)
+}
+
 /// Save a built palette.
 ///
 /// Colours are added to the library as unnamed entries: a palette member is a
 /// colour in its own right, and naming every one of them would be busywork.
+/// The token, by contrast, is stored against the membership — it says what the
+/// colour is called *in this palette*, which is not a fact about the colour.
 #[tauri::command]
 fn save_palette(
     name: String,
     hexes: Vec<String>,
+    tokens: Option<Vec<TokenInput>>,
     state: tauri::State<'_, AppState>,
 ) -> Result<String, String> {
     if hexes.len() < MIN_PALETTE {
@@ -895,33 +976,42 @@ fn save_palette(
     if hexes.len() > MAX_PALETTE {
         return Err(format!("a palette holds at most {MAX_PALETTE} colours"));
     }
+    let tokens = tokens.unwrap_or_default();
 
     let store = state
         .store
         .lock()
         .map_err(|_| "the colour library is unavailable".to_string())?;
 
-    let mut ids = Vec::with_capacity(hexes.len());
-    for hex in &hexes {
+    let mut members = Vec::with_capacity(hexes.len());
+    for (i, hex) in hexes.iter().enumerate() {
         let color = Color::parse_hex(hex).map_err(|e| e.to_string())?;
-        ids.push(
-            store
-                .add_colour(&pallet_store::NewColour::new(color))
-                .map_err(|e| e.to_string())?,
-        );
+        let colour_id = store
+            .add_colour(&pallet_store::NewColour::new(color))
+            .map_err(|e| e.to_string())?;
+        members.push(pallet_store::Member {
+            colour_id,
+            token: tokens.get(i).map(Into::into).unwrap_or_default(),
+        });
     }
 
     store
-        .create_palette(name.trim(), &ids)
+        .create_palette_with(name.trim(), &members)
         .map_err(|e| e.to_string())
 }
 
-/// The export formats, for the Build screen's chips.
+/// The export formats, for the Build screen.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ExportFormat {
     id: String,
     label: String,
+    /// The extension the written file gets, without a dot.
+    ///
+    /// The label alone does not say it: "Tailwind" writes a `.js`, "CSS vars"
+    /// a `.css`, and the two are not guessable from one another. The crate has
+    /// always known this; it simply was not passed on.
+    extension: String,
 }
 
 /// Which formats can be written.
@@ -932,6 +1022,7 @@ fn export_formats() -> Vec<ExportFormat> {
         .map(|f| ExportFormat {
             id: f.id().into(),
             label: f.label().into(),
+            extension: f.extension().into(),
         })
         .collect()
 }
@@ -946,20 +1037,17 @@ fn export_palette(
     name: String,
     hexes: Vec<String>,
     format: String,
+    tokens: Option<Vec<TokenInput>>,
     state: tauri::State<'_, AppState>,
 ) -> Result<String, String> {
     let format = pallet_export::Format::parse(&format)
         .ok_or_else(|| format!("`{format}` is not a format Pallet writes"))?;
 
-    let swatches = hexes
-        .iter()
-        .map(|hex| {
-            Color::parse_hex(hex)
-                .map(pallet_export::Swatch::new)
-                .map_err(|e| e.to_string())
-        })
-        .collect::<Result<Vec<_>, String>>()?;
+    let swatches = swatches_from(&hexes, &tokens.unwrap_or_default())?;
 
+    // Members the user named keep their names; the rest are still filled in
+    // from the nearest match, so a half-tokened palette exports sensibly
+    // rather than mixing real names with `colour-4`.
     let palette = pallet_export::Palette::new(name.trim(), swatches).with_suggested_names();
     let bytes = pallet_export::write(&palette, format).map_err(|e| e.to_string())?;
 
@@ -971,6 +1059,152 @@ fn export_palette(
     std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
 
     Ok(path.display().to_string())
+}
+
+/// One shared library found in the shared folder.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SharedFile {
+    /// Full path, handed straight back to `import_library`.
+    path: String,
+    /// The file name, which is all the user needs to see.
+    name: String,
+    /// Bytes on disk, for the hint line under the name.
+    size: u64,
+}
+
+/// What an import did, for the UI to report back.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ImportReport {
+    colours_added: usize,
+    colours_known: usize,
+    palettes_added: usize,
+    palettes_known: usize,
+    members_dropped: usize,
+}
+
+impl From<pallet_store::Merged> for ImportReport {
+    fn from(m: pallet_store::Merged) -> Self {
+        Self {
+            colours_added: m.colours_added,
+            colours_known: m.colours_known,
+            palettes_added: m.palettes_added,
+            palettes_known: m.palettes_known,
+            members_dropped: m.members_dropped,
+        }
+    }
+}
+
+/// Where shared libraries are read from and written to.
+#[tauri::command]
+fn shared_dir(state: tauri::State<'_, AppState>) -> String {
+    state.paths.shared_dir().display().to_string()
+}
+
+/// Write this library out as a file to hand to someone else.
+///
+/// To the shared folder rather than through a save dialog, for the reason
+/// `export_palette` gives: the path is known, and asking every time is worse
+/// than saying where it went.
+#[tauri::command]
+fn share_library(state: tauri::State<'_, AppState>) -> Result<String, String> {
+    let bundle = state
+        .store
+        .lock()
+        .map_err(|_| "the colour library is unavailable".to_string())?
+        .export_bundle()
+        .map_err(|e| e.to_string())?;
+    let json = bundle.to_json().map_err(|e| e.to_string())?;
+
+    let dir = state.paths.shared_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+
+    // Dated, because the thing people do with these is send one, change their
+    // library, and send another; `pallet-library.pallet` twice in a downloads
+    // folder tells the recipient nothing about which is which. The counter is
+    // for the second export on the same day, which overwriting would lose.
+    //
+    // The date is sliced off the bundle's own `exported_at` rather than read
+    // from the clock again: it is already an RFC 3339 stamp, it costs the app
+    // no date-formatting dependency, and taking it from the file guarantees
+    // the name cannot disagree with the contents.
+    let today = bundle.exported_at.get(..10).unwrap_or("undated");
+    let mut path = dir.join(format!(
+        "pallet-library-{today}.{}",
+        pallet_store::share::EXTENSION
+    ));
+    let mut n = 2;
+    while path.exists() {
+        path = dir.join(format!(
+            "pallet-library-{today}-{n}.{}",
+            pallet_store::share::EXTENSION
+        ));
+        n += 1;
+    }
+
+    std::fs::write(&path, json).map_err(|e| e.to_string())?;
+    Ok(path.display().to_string())
+}
+
+/// The shared libraries sitting in the shared folder, newest first.
+#[tauri::command]
+fn shared_libraries(state: tauri::State<'_, AppState>) -> Result<Vec<SharedFile>, String> {
+    let dir = state.paths.shared_dir();
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        // No folder yet is not an error; it is a library nobody has shared.
+        return Ok(Vec::new());
+    };
+
+    let mut found: Vec<(std::time::SystemTime, SharedFile)> = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some(pallet_store::share::EXTENSION) {
+            continue;
+        }
+        let Ok(meta) = entry.metadata() else { continue };
+        if !meta.is_file() {
+            continue;
+        }
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string();
+        found.push((
+            meta.modified().unwrap_or(std::time::UNIX_EPOCH),
+            SharedFile {
+                path: path.display().to_string(),
+                name,
+                size: meta.len(),
+            },
+        ));
+    }
+
+    // Newest first, which is the one most likely to be the file just dropped
+    // in. `Reverse` rather than a flipped comparator, per clippy.
+    found.sort_by_key(|(modified, _)| std::cmp::Reverse(*modified));
+    Ok(found.into_iter().map(|(_, f)| f).collect())
+}
+
+/// Merge a shared library into this one.
+///
+/// Additive: see `pallet_store::share`. Nothing the user already has is
+/// changed, so this is safe to do with a file of unknown provenance and safe
+/// to repeat with one already taken in.
+#[tauri::command]
+fn import_library(path: String, state: tauri::State<'_, AppState>) -> Result<ImportReport, String> {
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("could not read {path}: {e}"))?;
+    let bundle = pallet_store::Bundle::from_json(&text).map_err(|e| e.to_string())?;
+
+    let merged = state
+        .store
+        .lock()
+        .map_err(|_| "the colour library is unavailable".to_string())?
+        .import_bundle(&bundle)
+        .map_err(|e| e.to_string())?;
+
+    Ok(merged.into())
 }
 
 /// Rename a palette.
@@ -1078,6 +1312,75 @@ fn save_colour(hex: String, state: tauri::State<'_, AppState>) -> Result<String,
         .map_err(|e| e.to_string())
 }
 
+/// Put text on the system clipboard.
+///
+/// The window used to call `navigator.clipboard.writeText` instead. That is a
+/// browser API answering to a browser's rules — it needs a secure context and
+/// recent user activation, and WebKitGTK grants it far less readily than
+/// WebView2 does — so copying worked on Windows and was unreliable on Linux.
+/// Going through the backend makes one path of it, and the same one the CLI
+/// has always used.
+#[tauri::command]
+fn copy_text(text: String) -> Result<(), String> {
+    copy_to_clipboard(text)
+}
+
+/// Windows: the clipboard is owned by the OS, so setting it is enough.
+#[cfg(not(unix))]
+fn copy_to_clipboard(text: String) -> Result<(), String> {
+    arboard::Clipboard::new()
+        .map_err(|e| e.to_string())?
+        .set_text(text)
+        .map_err(|e| e.to_string())
+}
+
+/// Linux: the clipboard is a promise, and something has to stay to keep it.
+///
+/// A Wayland (or X11) selection is not storage — it is served on demand by a
+/// live process, and it is dropped the moment that process stops offering it.
+/// `arboard`'s `wait()` is what does the offering, and it blocks until another
+/// application takes the selection.
+///
+/// The CLI solves this by spawning a detached copy of itself to do the
+/// blocking, because a command-line tool has exited by the time anyone pastes.
+/// This process has not: the window is still open, so it can hold its own
+/// clipboard on a background thread. Copying again replaces the selection,
+/// which is what releases the previous holder — so the thread before it
+/// returns from `wait()` and ends, and only ever one is parked at a time.
+///
+/// Opening the clipboard can fail in ways worth reporting — no display, no
+/// compositor offering the protocol — so the thread sends that much back
+/// before it parks. Everything after it cannot be reported: `wait()` does not
+/// return until someone pastes, so waiting on the write would mean waiting on
+/// the paste. A later failure is logged instead.
+///
+/// The clipboard is built on the thread rather than handed to it because
+/// `arboard::Clipboard` is not `Send` on every backend.
+#[cfg(unix)]
+fn copy_to_clipboard(text: String) -> Result<(), String> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        use arboard::SetExtLinux as _;
+        let mut clipboard = match arboard::Clipboard::new() {
+            Ok(clipboard) => {
+                let _ = tx.send(Ok(()));
+                clipboard
+            }
+            Err(e) => {
+                let _ = tx.send(Err(e.to_string()));
+                return;
+            }
+        };
+        if let Err(e) = clipboard.set().wait().text(text) {
+            tracing::warn!("could not hold the clipboard: {e}");
+        }
+    });
+    // A clipboard slow enough to hit this is one worth not blocking the window
+    // for; the copy may well still land.
+    rx.recv_timeout(std::time::Duration::from_secs(2))
+        .unwrap_or(Ok(()))
+}
+
 /// The most recent pick, so the window opens showing something real.
 #[tauri::command]
 fn latest_pick(state: tauri::State<'_, AppState>) -> Result<Option<String>, String> {
@@ -1111,6 +1414,67 @@ fn contrast_report(hex: String) -> Result<Vec<CodeRow>, String> {
         }
     })
     .collect())
+}
+
+/// One pairing the preview wants judged: something drawn over something else.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ContrastPair {
+    /// Echoed back so the caller can match verdicts to rows without relying
+    /// on the order surviving the round trip.
+    id: String,
+    /// The thing in front: text, or an outline.
+    fore: String,
+    /// What it is drawn on.
+    back: String,
+    /// Whether this is a shape rather than body text.
+    ///
+    /// WCAG asks 4.5:1 of body text and only 3:1 of a border, an icon or any
+    /// other non-text thing that has to be distinguishable. Judging a card's
+    /// outline by the body-text bar would fail palettes that are perfectly
+    /// usable.
+    #[serde(default)]
+    graphic: bool,
+}
+
+/// What the preview says about one pairing.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ContrastVerdict {
+    id: String,
+    ratio: f32,
+    /// The WCAG 2.1 level for body text, whatever `graphic` said: it is worth
+    /// showing even for a border, as the number behind the pass or fail.
+    level: String,
+    apca: f32,
+    /// Whether it clears the bar that applies to this kind of pairing.
+    passes: bool,
+}
+
+/// Judge the pairings a themed preview produces.
+///
+/// The preview is assembled in the frontend, because which colour lands on
+/// which is a question about the design rather than about colour; the maths
+/// stays here, where `pallet_color::contrast` already holds both WCAG 2.1 and
+/// APCA. Taking a list rather than one pair keeps a card's worth of
+/// judgements to a single call.
+#[tauri::command]
+fn contrast_pairs(pairs: Vec<ContrastPair>) -> Result<Vec<ContrastVerdict>, String> {
+    pairs
+        .into_iter()
+        .map(|pair| {
+            let fore = Color::parse_hex(&pair.fore).map_err(|e| e.to_string())?;
+            let back = Color::parse_hex(&pair.back).map_err(|e| e.to_string())?;
+            let ratio = contrast::wcag21_ratio(fore, back);
+            Ok(ContrastVerdict {
+                id: pair.id,
+                ratio,
+                level: contrast::WcagLevel::of(ratio).label().to_string(),
+                apca: contrast::apca_lc(fore, back),
+                passes: ratio >= if pair.graphic { 3.0 } else { 4.5 },
+            })
+        })
+        .collect()
 }
 
 /// Work around WebKitGTK's DMABUF renderer, which fails on several drivers.
@@ -1190,7 +1554,13 @@ fn main() {
             export_palette,
             compositor_rounds_windows,
             bindings,
-            set_binding
+            set_binding,
+            copy_text,
+            contrast_pairs,
+            shared_dir,
+            share_library,
+            shared_libraries,
+            import_library
         ])
         .run(tauri::generate_context!())
         .expect("the Pallet window failed to start");

@@ -80,9 +80,29 @@ impl Paths {
         self.data_dir.join("exports")
     }
 
+    /// Where shared libraries are written, and where Pallet looks for ones to
+    /// take in.
+    ///
+    /// One folder in both directions rather than a `shared/in` and a
+    /// `shared/out`. A bundle you were sent and a bundle you wrote are the
+    /// same kind of file and get treated identically on import, so a split
+    /// would only create somewhere for a file to be in the wrong half.
+    ///
+    /// Kept out of `exports/`, which is full of `.css` and `.png` destined for
+    /// other programs. These are Pallet's own documents and are only ever
+    /// opened by Pallet.
+    pub fn shared_dir(&self) -> PathBuf {
+        self.data_dir.join("shared")
+    }
+
     /// Create every directory Pallet writes to. Safe to call repeatedly.
     pub fn ensure_dirs(&self) -> Result<()> {
-        for dir in [&self.config_dir, &self.data_dir, &self.exports_dir()] {
+        for dir in [
+            &self.config_dir,
+            &self.data_dir,
+            &self.exports_dir(),
+            &self.shared_dir(),
+        ] {
             std::fs::create_dir_all(dir).map_err(|source| Error::CreateDir {
                 path: dir.clone(),
                 source,

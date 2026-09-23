@@ -13,16 +13,16 @@
     "windows": [
       {
         "title": "Pallet",
-        "width": 440,
-        "height": 640,
+        "width": 464,
+        "height": 664,
         "resizable": true,
-        "minWidth": 440,
-        "minHeight": 420,
+        "minWidth": 464,
+        "minHeight": 444,
         "decorations": false,
         "transparent": true,
         "shadow": false,
         "center": true,
-        "maxWidth": 440
+        "maxWidth": 464
       }
     ],
     "security": {

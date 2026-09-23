@@ -27,6 +27,8 @@ pub enum Format {
     Scss,
     /// Pallet's own JSON.
     Json,
+    /// W3C Design Tokens, for handing a token set to other tooling.
+    Tokens,
     /// A GIMP palette.
     Gpl,
     /// Adobe Swatch Exchange.
@@ -37,11 +39,12 @@ pub enum Format {
 
 impl Format {
     /// Every format, in the order the Build screen lists them.
-    pub const ALL: [Format; 7] = [
+    pub const ALL: [Format; 8] = [
         Format::CssVars,
         Format::Tailwind,
         Format::Ase,
         Format::Json,
+        Format::Tokens,
         Format::Png,
         Format::Scss,
         Format::Gpl,
@@ -54,19 +57,21 @@ impl Format {
             Format::Tailwind => "tailwind",
             Format::Scss => "scss",
             Format::Json => "json",
+            Format::Tokens => "tokens",
             Format::Gpl => "gpl",
             Format::Ase => "ase",
             Format::Png => "png",
         }
     }
 
-    /// The label the prototype's chips show.
+    /// The label the Build screen's tiles show.
     pub fn label(self) -> &'static str {
         match self {
             Format::CssVars => "CSS vars",
             Format::Tailwind => "Tailwind",
             Format::Scss => "SCSS",
             Format::Json => "JSON",
+            Format::Tokens => "Design tokens",
             Format::Gpl => "GPL",
             Format::Ase => "ASE",
             Format::Png => "PNG",
@@ -74,12 +79,18 @@ impl Format {
     }
 
     /// The file extension, without a dot.
+    ///
+    /// Design tokens take a compound one. Both it and Pallet's own JSON are
+    /// JSON, so a bare `json` would have the two formats writing to the same
+    /// filename and each quietly overwriting the other; `.tokens.json` is also
+    /// what the DTCG ecosystem expects to find.
     pub fn extension(self) -> &'static str {
         match self {
             Format::CssVars => "css",
             Format::Tailwind => "js",
             Format::Scss => "scss",
             Format::Json => "json",
+            Format::Tokens => "tokens.json",
             Format::Gpl => "gpl",
             Format::Ase => "ase",
             Format::Png => "png",
@@ -104,6 +115,7 @@ pub fn write(palette: &Palette, format: Format) -> Result<Vec<u8>> {
         Format::Tailwind => text::tailwind(palette).into_bytes(),
         Format::Scss => text::scss(palette).into_bytes(),
         Format::Json => text::json(palette)?.into_bytes(),
+        Format::Tokens => text::dtcg(palette)?.into_bytes(),
         Format::Gpl => text::gpl(palette).into_bytes(),
         Format::Ase => ase::write(palette),
         Format::Png => sheet::png(palette)?,

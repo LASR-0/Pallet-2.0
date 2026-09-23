@@ -108,7 +108,7 @@ export function renderLibraryBar(
       // Fully rounded, so the bar reads as a field rather than as a panel
       // with something typed into it.
       "padding:0 14px;border-radius:999px;" +
-      "border:1px solid var(--line);background:var(--panel)",
+      "border:1px solid var(--line);background:var(--panel);box-shadow:var(--lift)",
   });
 
   // The ghost sits under the input, inside a wrapper that holds only those

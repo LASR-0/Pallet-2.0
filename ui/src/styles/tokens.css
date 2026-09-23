@@ -4,86 +4,233 @@
  * `sketchbook` is copied verbatim from the prototype's THEMES object in
  * `Prototype/package/Pallet Window.dc.html` and is not to be "improved".
  *
- * `studio` departs from the prototype deliberately: it is now a Solarized Dark
- * palette, deep blue rather than the original neutral charcoal, which reads as
- * a proper counterpart to the warm Sketchbook rather than a greyscale of it.
- * Base values are Ethan Schoonover's, so the two themes have independent
- * provenance rather than one being a tint of the other.
+ * `studio` departs from the prototype deliberately: an ink-navy built here
+ * rather than borrowed, deep blue rather than the original neutral charcoal,
+ * which reads as a proper counterpart to the warm Sketchbook rather than a
+ * greyscale of it. It was Solarized Dark for a while; the notes on the block
+ * itself say what that cost and why it went.
+ *
+ * Every contrast figure quoted below is WCAG 2.1 against the token named, and
+ * the two that matter most are the ones a palette tool cannot afford to get
+ * wrong: body copy on the page, and white on a filled accent.
  */
 
 :root[data-theme="sketchbook"] {
   --bg: #f7f2e9;
   --panel: #fffcf6;
   --panelHi: #fffffc;
-  --chrome: #f2eadc;
+  /* The title bar and tooltips. Darker than the paper it sits on by more than
+     a hair — at the prototype's #f2eadc the bar was 5 levels off `--bg` and
+     read as the same sheet with a line drawn across it. */
+  --chrome: #ece0cb;
+  /* The tab strip: the midpoint of `--chrome` and `--bg`, channel by channel.
+     The chrome then steps down to the page in two moves rather than one, so
+     the bar reads as the top of the window and the tabs as the thing joining
+     it to the content, instead of the two being one slab. */
+  --chromeMid: #f2e9da;
   --ink: #3a342c;
   --mute: rgba(58, 52, 44, 0.46);
   --line: rgba(58, 52, 44, 0.08);
   --edge: rgba(58, 52, 44, 0.07);
   --hover: rgba(58, 52, 44, 0.045);
   --accent: #c87d5b;
+  /* The accent taken down to L 42% at the same hue and saturation — hsl(19,
+     50%, 42%) against the accent's hsl(19, 50%, 57%). Used where the accent
+     has to hold its own as a line rather than as a fill: the window's ring,
+     and the pressed state of anything already filled with `--accent`. */
+  --accentDeep: #a15736;
   /* Washes of the accent, for fills that must stay legible with accent text
      on top. White on #c87d5b is about 2.9:1 — a tint keeps the contrast the
      text already had. */
   --accentSoft: rgba(200, 125, 91, 0.16);
   --accentFaint: rgba(200, 125, 91, 0.07);
+  /* What is lettered *on* a fill of `--accent` or `--accentDeep`: the selected
+     tab, the Clear pill, Build's pick button, a lit settings pill, the medium
+     chooser. White, which is what all five of those said literally before this
+     token existed, so nothing moves.
+
+     Worth naming because it is a pairing rather than a colour. It is only ever
+     correct with respect to whatever `--accent` currently is, and five
+     separate `color:#fff` strings had no way of saying that — change the
+     accent to something pale and every one of them silently becomes white on
+     white, with nothing in the file to suggest they were related. White on
+     #c87d5b is 2.9:1, the weakest figure in this theme, which is exactly why
+     it wants to be changeable in one place. */
+  --accentInk: #fff;
+  /* The cross on the close button, on its `--danger` fill. Its own token
+     rather than `--accentInk` because the two fills are free to move apart:
+     they are different colours making different promises, and 5.6:1 here has
+     nothing to do with what the accent is doing. */
+  --dangerInk: #fff;
+  /* The hairline drawn *inside* a swatch, so a colour close to the page it
+     sits on still shows an edge. Channels only, because each site picks its
+     own alpha — see `--swatchInk` on Studio for why this is not a flat colour.
+     Black here, which is what every one of those sites said literally before
+     this token existed, so Sketchbook is unchanged to the pixel. */
+  --swatchInk: 0, 0, 0;
   /* Closing the window is the one destructive control on the chrome, so it
-     says so rather than borrowing the accent. */
-  --danger: #a33627;
-  --dangerSoft: rgba(223, 45, 60, 0.25);
-  --dangerDark: #661308;
+     says so rather than borrowing the accent. Lifted from the prototype's
+     #a33627 to hsl(7, 61%, 45%): that red was nearly as dark as the ink and
+     read as a warning rather than as a button. White on it is 5.6:1, so the
+     cross is still comfortable — it was 6.7:1, which was more than a 12px
+     glyph needed. */
+  --danger: #b93d2c;
   --rad: 20px;
   --rad2: 16px;
   --font: "Karla";
   --mono: "DM Mono";
-  --shadow: 0 20px 44px -18px rgba(90, 70, 50, 0.35);
+  /* The window's own shadow. Two layers: a tight one that draws the edge, and
+     a wide one that gives it height. Kept inside `--shell-pad` — the window is
+     transparent, so anything wider than the gutter is simply cut off. */
+  --shadow:
+    0 1px 3px rgba(90, 70, 50, 0.12), 0 6px 18px -4px rgba(90, 70, 50, 0.32);
+  /* The ring around the window: `--accentDeep` at half opacity, so the frame
+     picks up whatever it lies over — the title bar at the top, the page below
+     — instead of being a flat band cutting across both. Written out rather
+     than composed from `--accentDeep`, since a custom property holds a hex,
+     not channels to take an alpha from. */
+  --shellEdge: rgba(161, 87, 54, 0.5);
+  /* The scrollbar thumb: the frame's colour at half its opacity. The frame
+     states the window's boundary and is meant to be seen; the thumb only says
+     where you are in a list, and at the frame's own weight it read as a second
+     border a few pixels inside the first. */
+  --shellEdgeFaint: rgba(161, 87, 54, 0.25);
+  /* Panels and cards: enough to separate them from `--bg`, not enough to read
+     as floating. The two backgrounds differ by about 3% here, so the shadow is
+     doing most of the work of telling them apart. */
+  --lift: 0 1px 2px rgba(90, 70, 50, 0.07), 0 2px 6px -2px rgba(90, 70, 50, 0.1);
+  /* Things that genuinely float over the window: tooltips, the context menu.
+     Stronger than `--lift` because they have to look detached, tighter than
+     `--shadow` because they are small. */
+  --pop: 0 1px 3px rgba(90, 70, 50, 0.16), 0 6px 16px -3px rgba(90, 70, 50, 0.26);
 }
 
 :root[data-theme="studio"] {
-  /* Solarized Dark: base03 #002b36, base02 #073642, base01 #586e75,
-     base0 #839496, base1 #93a1a1, blue #268bd2, cyan #2aa198. */
-  --bg: #002b36;
-  --panel: #073642;
-  --panelHi: #0d4552;
-  --chrome: #00212b;
-  --ink: #93a1a1;
-  --mute: rgba(131, 148, 150, 0.62);
-  --line: rgba(147, 161, 161, 0.13);
-  --edge: rgba(147, 161, 161, 0.1);
-  --hover: rgba(147, 161, 161, 0.08);
-  /* Solarized blue, which lifts against base03 without the glare of cyan. */
-  --accent: #268bd2;
-  --accentSoft: rgba(38, 139, 210, 0.22);
-  --accentFaint: rgba(38, 139, 210, 0.09);
-  /* Closing is destructive on both themes, but a dark theme has to reach the
-     same contrast from the other direction. Solarized red at 30% over base03
-     composites to #42262c — the red reading as a plum where it lies over the
-     blue — and the glyph then has to be lighter than the wash rather than
-     darker. #ff7b72 sits at 5.4:1 against it: less than Sketchbook's 7.4:1,
-     because anything darker stops separating from base03 at all, but well past
-     the 4.5:1 a small glyph needs. */
-  --danger: #dc322f;
-  --dangerSoft: rgba(220, 50, 47, 0.3);
-  --dangerDark: #ff7b72;
+  /* A ladder in HSL at hue 214, saturation easing off as it climbs: 45% at the
+     chrome down in the dark, 35% by the time it reaches the lifted panel. Held
+     constant it would tint the pale surfaces visibly blue, and a swatch laid on
+     a blue card is being judged against the card.
+
+     Solarized Dark was here before, and the base was its base03 #002b36 — a
+     teal, hue 193, at full saturation. It gave the window a cast that fought
+     every warm colour in the library, which is a poor trait in a palette tool.
+     This keeps the blue lineage and drops the cyan. */
+  --bg: #0d1621;
+  --panel: #151f2e;
+  --panelHi: #1d2b3c;
+  /* A dark theme separates the chrome from the page by going further down
+     rather than by going up: lifting it would make the bar the brightest thing
+     on screen. */
+  --chrome: #070c12;
+  /* The midpoint of `--chrome` and `--bg`, channel by channel, as on
+     Sketchbook. */
+  --chromeMid: #0a111a;
+  /* Near-white at hue 210, carrying just enough blue to belong to the ladder
+     without going grey. 14.4:1 on `--bg`, where Solarized's base1 #93a1a1
+     managed 7.5 — that palette dims its own foreground on purpose, which reads
+     as tasteful restraint in a code editor and as a haze in a window whose job
+     is showing you colour. */
+  --ink: #cce3fa;
+  /* 4.7:1 on `--bg`, so secondary copy clears the body-text bar rather than
+     sitting just under it. */
+  --mute: rgba(193, 215, 237, 0.52);
+  /* Alphas a shade under Sketchbook's, since they are struck from a much
+     brighter ink: at the same numbers these read as lines drawn on the page
+     rather than as seams in it. */
+  --line: rgba(220, 230, 240, 0.12);
+  --edge: rgba(220, 230, 240, 0.09);
+  --hover: rgba(220, 230, 240, 0.07);
+  /* hsl(208, 72%, 54%) — cleaner and brighter than Solarized's blue, and
+     pulled off its hue towards true blue. 5.3:1 against `--bg` as a line or a
+     letter; white on it as a fill is 3.4:1, which is better than either theme
+     managed before. */
+  --accent: #6d6dec;
+  /* The accent at L 34%, hue and saturation held. Still well clear of the
+     background, so the window's ring reads as a frame against a dark desktop
+     instead of dissolving into it — and white on it is 7.1:1, so anything
+     filled with the accent becomes comfortable to read the moment it is
+     pressed. */
+  --accentDeep: #2b1895;
+  /* 4.5:1 for accent text laid on it, so a wash is a legible fill and not just
+     a tint. */
+  --accentSoft: rgba(53, 143, 222, 0.22);
+  --accentFaint: rgba(53, 143, 222, 0.09);
+  /* As on Sketchbook: what is lettered on an `--accent` or `--accentDeep`
+     fill. White here too, so this changes nothing today.
+
+     No figure quoted, unlike Sketchbook's, because this theme's accent is
+     still being tuned and a number written next to a value that is moving is
+     worse than no number. The bar it has to clear: 4.5:1 against `--accent`
+     for the tab and pill labels, which are body-sized text. Recheck it
+     whenever the accent moves — a darker accent makes white safer and a paler
+     one makes it untenable, and this is the one line that has to change. */
+  --accentInk: #d2e4f7;
+  /* The close cross, on `--danger`. See Sketchbook for why it is separate. */
+  --dangerInk: #fff;
+  /* The swatch hairline, and the one token here that has to invert: a black
+     line inside a swatch is invisible on a dark page, and it is exactly the
+     dark colours — the ones that vanish into `--bg` — that need the edge. So
+     this is the ink, and a near-black swatch gets a faint light rule around it
+     while a pale one, which already separates from the page on its own, barely
+     shows it.
+
+     Channels rather than a colour because the call sites each carry their own
+     alpha, from .07 on a library tile to .12 on a Build slot, and a custom
+     property holds a value, not something to take an alpha from. Written as
+     `rgba(var(--swatchInk), .09)`, which keeps every one of those weights
+     exactly as it was. */
+  --swatchInk: 220, 230, 240;
+  /* hsl(4, 70%, 55%): the same red Solarized was reaching for, without the
+     orange in it. White on it is 4.2:1 — matching what the old value gave, and
+     well past the 3:1 a glyph of this weight needs. */
+  --danger: #dd473c;
   --rad: 22px;
   --rad2: 18px;
   --font: "Sora";
   --mono: "DM Mono";
-  --shadow: 0 24px 52px -20px rgba(0, 0, 0, 0.75);
+  /* Deeper than Sketchbook's at every layer: a shadow on a dark theme has only
+     black to work with, so it needs more of it to register at all — and this
+     base is darker than the one these numbers were set against, so they go
+     deeper again. */
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.45), 0 7px 20px -5px rgba(0, 0, 0, 0.72);
+  /* `--accentDeep` at half opacity, as on Sketchbook. */
+  --shellEdge: rgba(24, 53, 149, 0.5);
+  /* At half the frame's opacity, as on Sketchbook — though it lands
+     differently here: this is a blue lighter than the page, so the thumb reads
+     as a lightening of it rather than as a mark on it. */
+  --shellEdgeFaint: rgba(24, 76, 149, 0.25);
+  --lift: 0 1px 2px rgba(0, 0, 0, 0.32), 0 2px 6px -2px rgba(0, 0, 0, 0.38);
+  --pop: 0 1px 3px rgba(0, 0, 0, 0.48), 0 6px 16px -3px rgba(0, 0, 0, 0.62);
 }
 
 /*
- * Window corners.
+ * Window corners and the gutter around the shell.
  *
  * A tiling compositor rounds windows itself, so drawing our own radius on top
  * produces a visible double corner at two different curvatures. `data-corners`
  * is set at start-up from the detected desktop: "system" lets the compositor
  * do it, "app" draws the design's radius, which is what Windows and floating
  * desktops need since nothing rounds the window for them.
+ *
+ * `--shell-pad` is the transparent margin the shell's shadow falls into. The
+ * OS window has no decoration and no native shadow, so a shadow drawn at the
+ * very edge of the viewport has nowhere to go and is clipped away entirely —
+ * which is why the shell has carried `box-shadow` all along without one ever
+ * being visible. Every window dimension in `tauri.conf.json` is the design's
+ * plus 24px — 464 wide for a 440px shell — so the gutter costs the content
+ * nothing. The two numbers have to move together: widen the gutter alone and
+ * the window narrows, widen the window alone and the shell is off-centre.
+ *
+ * A compositor that rounds windows also draws their shadow, so there the
+ * gutter would be a transparent border around a shadow we are not drawing.
  */
 :root[data-corners="system"] {
   --shell-rad: 0px;
+  --shell-pad: 0px;
+  --shell-shadow: none;
 }
 :root:not([data-corners="system"]) {
   --shell-rad: var(--rad);
+  --shell-pad: 12px;
+  --shell-shadow: var(--shadow);
 }

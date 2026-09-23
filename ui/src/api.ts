@@ -16,6 +16,11 @@ import type {
   ExportFormat,
   Binding,
   SettingRow,
+  Token,
+  ContrastPair,
+  ContrastVerdict,
+  SharedFile,
+  ShareReport,
 } from "./state";
 
 export async function colorDetail(
@@ -71,8 +76,9 @@ export async function nextPaletteName(): Promise<string> {
 export async function savePalette(
   name: string,
   hexes: string[],
+  tokens: Token[],
 ): Promise<string> {
-  return invoke<string>("save_palette", { name, hexes });
+  return invoke<string>("save_palette", { name, hexes, tokens });
 }
 
 export async function renamePalette(id: string, name: string): Promise<void> {
@@ -115,8 +121,9 @@ export async function exportPalette(
   name: string,
   hexes: string[],
   format: string,
+  tokens: Token[],
 ): Promise<string> {
-  return invoke<string>("export_palette", { name, hexes, format });
+  return invoke<string>("export_palette", { name, hexes, format, tokens });
 }
 
 export async function compositorRoundsWindows(): Promise<boolean> {
@@ -129,4 +136,54 @@ export async function bindings(): Promise<Binding[]> {
 
 export async function setBinding(key: string, combo: string): Promise<void> {
   return invoke("set_binding", { key, combo });
+}
+
+/**
+ * Put text on the system clipboard.
+ *
+ * Through Rust rather than `navigator.clipboard`: that is a browser API with a
+ * browser's preconditions, and WebKitGTK is much stricter about them than
+ * WebView2 — copying worked on Windows and was unreliable on Linux. The
+ * backend does whatever the platform's clipboard actually needs.
+ */
+export async function copyText(text: string): Promise<void> {
+  return invoke("copy_text", { text });
+}
+
+/** Where shared libraries are written and looked for. */
+export async function sharedDir(): Promise<string> {
+  return invoke<string>("shared_dir");
+}
+
+/** Write this library out as a file to hand to someone else. */
+export async function shareLibrary(): Promise<string> {
+  return invoke<string>("share_library");
+}
+
+/** The shared libraries sitting in the shared folder, newest first. */
+export async function sharedLibraries(): Promise<SharedFile[]> {
+  return invoke<SharedFile[]>("shared_libraries");
+}
+
+/**
+ * Merge a shared library into this one.
+ *
+ * Additive, always: nothing the user already has is changed, which is what
+ * makes it safe to point at a file someone sent and safe to repeat.
+ */
+export async function importLibrary(path: string): Promise<ShareReport> {
+  return invoke<ShareReport>("import_library", { path });
+}
+
+/**
+ * Judge a set of foreground-on-background pairings.
+ *
+ * Which colour lands on which is a question about the design, so the preview
+ * decides the pairings; the maths stays in Rust, where both WCAG 2.1 and APCA
+ * already live. A whole card's worth goes in one call.
+ */
+export async function contrastPairs(
+  pairs: ContrastPair[],
+): Promise<ContrastVerdict[]> {
+  return invoke<ContrastVerdict[]>("contrast_pairs", { pairs });
 }

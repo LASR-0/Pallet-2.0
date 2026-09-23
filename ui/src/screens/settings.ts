@@ -8,7 +8,7 @@
  */
 
 import { el } from "../dom";
-import type { Binding, SettingRow } from "../state";
+import type { Binding, SettingRow, ShareState } from "../state";
 
 const MONO = "var(--mono),monospace";
 const SANS = "var(--font),sans-serif";
@@ -33,9 +33,12 @@ function group(children: HTMLElement[]): HTMLElement {
   return el(
     "div",
     {
+      // The lift goes on the group rather than on each row, for the same
+      // reason as the code block on Current: a shadow per row would fill the
+      // 1px seams between them.
       style:
         "display:flex;flex-direction:column;gap:1px;border-radius:var(--rad2);" +
-        "overflow:hidden;background:var(--line)",
+        "overflow:hidden;background:var(--line);box-shadow:var(--lift)",
     },
     children,
   );
@@ -66,13 +69,122 @@ function settingRow(
   );
 }
 
+/** A small filled button, for the two things the sharing panel does. */
+function button(
+  label: string,
+  enabled: boolean,
+  onClick: () => void,
+): HTMLElement {
+  return el("span", {
+    class: enabled ? "clickable" : undefined,
+    style:
+      `padding:6px 11px;border-radius:7px;font:500 9.5px/1 ${MONO};` +
+      "letter-spacing:.07em;white-space:nowrap;" +
+      (enabled
+        ? "background:var(--accent);color:var(--accentInk);"
+        : "background:var(--hover);color:var(--mute);cursor:default;opacity:.6"),
+    text: label,
+    onClick: enabled ? onClick : undefined,
+  });
+}
+
+/**
+ * Sharing a library, and taking one in.
+ *
+ * Both directions go through one folder, which is named here in full and
+ * copyable. There is no file dialog in this window — `export_palette` explains
+ * why — so the folder *is* the interface, and a user who cannot find it cannot
+ * use the feature at all. Dropping a file on the window does the same thing
+ * without the detour, and is mentioned right where it is relevant rather than
+ * left to be discovered.
+ */
+function sharing(
+  share: ShareState,
+  actions: {
+    onShare: () => void;
+    onImport: (path: string) => void;
+    onCopyPath: (path: string) => void;
+  },
+): HTMLElement[] {
+  const children: HTMLElement[] = [heading("SHARING")];
+
+  children.push(
+    group([
+      settingRow(
+        "Share this library",
+        "Writes a file holding your colours and palettes, to send to anyone " +
+          "else running Pallet.",
+        button("EXPORT", !share.busy, actions.onShare),
+      ),
+      settingRow(
+        "Shared folder",
+        share.dir ?? "…",
+        button("COPY", share.dir !== null, () =>
+          actions.onCopyPath(share.dir ?? ""),
+        ),
+      ),
+    ]),
+  );
+
+  // The outcome of the last thing tried. In place rather than as a toast: it
+  // is a count the user may want to read twice, and it belongs next to the
+  // button that produced it.
+  if (share.notice) {
+    children.push(
+      el("span", {
+        style:
+          `font:400 10.5px/1.45 ${SANS};color:var(--ink);padding:0 2px;` +
+          "background:var(--accentFaint);border-radius:8px;padding:8px 10px",
+        text: share.notice,
+      }),
+    );
+  }
+
+  if (share.files === null) {
+    children.push(
+      el("span", {
+        style: `font:400 10px/1.4 ${SANS};color:var(--mute);padding:0 2px`,
+        text: "Looking…",
+      }),
+    );
+  } else if (share.files.length === 0) {
+    children.push(
+      el("span", {
+        style: `font:400 10px/1.4 ${SANS};color:var(--mute);padding:0 2px`,
+        text:
+          "No shared libraries here yet. Drop one on this window, or put it " +
+          "in the folder above and come back.",
+      }),
+    );
+  } else {
+    children.push(
+      group(
+        share.files.map((file) =>
+          settingRow(
+            file.name,
+            `${Math.max(1, Math.round(file.size / 1024))} KB · adds what you ` +
+              "do not already have, changes nothing you do",
+            button("IMPORT", !share.busy, () => actions.onImport(file.path)),
+          ),
+        ),
+      ),
+    );
+  }
+
+  return children;
+}
+
 export function renderSettings(
   rows: SettingRow[] | null,
   bindings: Binding[] | null,
   capturing: string | null,
+  share: ShareState,
   actions: {
     onCycle: (key: string) => void;
     onCapture: (key: string) => void;
+    onShare: () => void;
+    onImport: (path: string) => void;
+    onCopyPath: (path: string) => void;
   },
 ): HTMLElement {
   if (rows === null) {
@@ -89,7 +201,7 @@ export function renderSettings(
         `padding:5px 9px;border-radius:6px;font:500 9.5px/1 ${MONO};` +
         "letter-spacing:.07em;white-space:nowrap;" +
         (on
-          ? "background:var(--accent);color:#fff;"
+          ? "background:var(--accent);color:var(--accentInk);"
           : "background:var(--hover);color:var(--mute);") +
         (editable ? "" : "opacity:.6;cursor:default"),
       text,
@@ -110,6 +222,8 @@ export function renderSettings(
   );
 
   const children: HTMLElement[] = [general];
+
+  children.push(...sharing(share, actions));
 
   if (bindings && bindings.length) {
     children.push(heading("KEY BINDINGS"));

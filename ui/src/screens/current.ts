@@ -50,7 +50,7 @@ export function renderCurrent(
     {
       style:
         "position:relative;height:138px;border-radius:var(--rad2);overflow:hidden;" +
-        `background:${detail.hex};box-shadow:inset 0 0 0 1px rgba(0,0,0,.09)`,
+        `background:${detail.hex};box-shadow:inset 0 0 0 1px rgba(var(--swatchInk),.09)`,
     },
     [
       el(
@@ -85,9 +85,12 @@ export function renderCurrent(
   const codeBlock = el(
     "div",
     {
+      // The lift goes on the block, not on each row: the rows are separated by
+      // 1px of `--line` showing through from behind, and a shadow per row
+      // would fill those gaps and turn the seams into grey bands.
       style:
         "display:flex;flex-direction:column;gap:1px;border-radius:var(--rad2);" +
-        "overflow:hidden;background:var(--line)",
+        "overflow:hidden;background:var(--line);box-shadow:var(--lift)",
     },
     detail.codeRows.map((row) =>
       el(
@@ -161,7 +164,7 @@ export function renderCurrent(
         },
         [
           el("div", {
-            style: `height:56px;border-radius:8px;background:${hex};box-shadow:inset 0 0 0 1px rgba(0,0,0,.09)`,
+            style: `height:56px;border-radius:8px;background:${hex};box-shadow:inset 0 0 0 1px rgba(var(--swatchInk),.09)`,
           }),
           el("span", {
             style: `font:400 9px/1 ${MONO};letter-spacing:.02em;color:var(--mute);text-align:center`,
@@ -182,8 +185,12 @@ export function renderCurrent(
   const rampBar = el(
     "div",
     {
+      // `--lift` in front of the seating ring, which stays: the ring keeps a
+      // near-white tint from bleeding into the page, and the lift sits the bar
+      // on it. Order matters — the inset has to be painted last.
       style:
-        "display:flex;border-radius:8px;overflow:hidden;box-shadow:inset 0 0 0 1px rgba(0,0,0,.09)",
+        "display:flex;border-radius:8px;overflow:hidden;" +
+        "box-shadow:var(--lift),inset 0 0 0 1px rgba(var(--swatchInk),.09)",
     },
     detail.ramp.map((step) =>
       el("div", {

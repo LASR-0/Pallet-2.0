@@ -47,26 +47,59 @@ fn encode_name(name: &str) -> (u16, Vec<u8>) {
 
 /// Serialise a palette as ASE.
 ///
-/// The palette becomes a named group so its name survives; a bare list of
-/// colours would lose it, and every application that reads ASE shows groups.
+/// ASE is the one format here with real groups of its own, so a token group
+/// becomes an actual group block and opens as a folder in Illustrator or
+/// Photoshop rather than as a prefix on a swatch name.
+///
+/// Groups are written side by side at the top level, not nested inside a group
+/// named after the palette. The file could carry both levels, but readers
+/// disagree about nested groups — several flatten or drop the inner one — and
+/// a folder structure that survives everywhere is worth more here than the
+/// palette name being repeated inside a file already named after it.
+///
+/// Without groups nothing changes: the palette is one named group, as before,
+/// so its name still survives a format that would otherwise lose it.
 pub fn write(palette: &Palette) -> Vec<u8> {
     let mut out = Vec::new();
     out.extend_from_slice(SIGNATURE);
     out.extend_from_slice(&1u16.to_be_bytes());
     out.extend_from_slice(&0u16.to_be_bytes());
 
-    // One block to open the group, one per colour, one to close it.
-    let blocks = palette.swatches.len() as u32 + 2;
+    let grouped = palette.grouped();
+    let sectioned = palette.has_groups();
+
+    // Every colour, plus an open and a close for each group that gets one.
+    // Ungrouped swatches in a sectioned file sit at the top level with no
+    // wrapper, since a folder called "ungrouped" is worse than no folder.
+    let wrappers = if sectioned {
+        grouped.iter().filter(|(g, _)| g.is_some()).count() as u32
+    } else {
+        1
+    };
+    let blocks = palette.swatches.len() as u32 + wrappers * 2;
     out.extend_from_slice(&blocks.to_be_bytes());
 
-    let (count, name) = encode_name(&palette.name);
-    out.extend_from_slice(&BLOCK_GROUP_OPEN.to_be_bytes());
-    out.extend_from_slice(&((2 + name.len()) as u32).to_be_bytes());
-    out.extend_from_slice(&count.to_be_bytes());
-    out.extend_from_slice(&name);
+    let open_group = |out: &mut Vec<u8>, label: &str| {
+        let (count, name) = encode_name(label);
+        out.extend_from_slice(&BLOCK_GROUP_OPEN.to_be_bytes());
+        out.extend_from_slice(&((2 + name.len()) as u32).to_be_bytes());
+        out.extend_from_slice(&count.to_be_bytes());
+        out.extend_from_slice(&name);
+    };
+    let close_group = |out: &mut Vec<u8>| {
+        out.extend_from_slice(&BLOCK_GROUP_CLOSE.to_be_bytes());
+        out.extend_from_slice(&0u32.to_be_bytes());
+    };
 
-    for swatch in &palette.swatches {
-        let (count, name) = encode_name(&swatch.label());
+    let colour_block = |out: &mut Vec<u8>, swatch: &crate::model::Swatch| {
+        // Inside its own group the swatch needs only its leaf name; with no
+        // group it takes the qualified one so nothing is lost.
+        let label = if sectioned && swatch.group().is_some() {
+            swatch.label()
+        } else {
+            swatch.qualified_label()
+        };
+        let (count, name) = encode_name(&label);
         let (r, g, b) = swatch.color.to_rgb();
 
         // name length + name + model + three floats + colour type
@@ -80,10 +113,34 @@ pub fn write(palette: &Palette) -> Vec<u8> {
             out.extend_from_slice(&(f32::from(channel) / 255.0).to_be_bytes());
         }
         out.extend_from_slice(&COLOUR_TYPE_NORMAL.to_be_bytes());
+    };
+
+    if !sectioned {
+        open_group(&mut out, &palette.name);
+        for swatch in &palette.swatches {
+            colour_block(&mut out, swatch);
+        }
+        close_group(&mut out);
+        return out;
     }
 
-    out.extend_from_slice(&BLOCK_GROUP_CLOSE.to_be_bytes());
-    out.extend_from_slice(&0u32.to_be_bytes());
+    for (group, members) in grouped {
+        match group {
+            Some(group) => {
+                open_group(&mut out, group);
+                for (_, swatch) in members {
+                    colour_block(&mut out, swatch);
+                }
+                close_group(&mut out);
+            }
+            None => {
+                for (_, swatch) in members {
+                    colour_block(&mut out, swatch);
+                }
+            }
+        }
+    }
+
     out
 }
 
@@ -126,6 +183,15 @@ fn to_channel(value: f32) -> u8 {
 }
 
 /// Parse an ASE file.
+///
+/// A group in ASE means one of two things here, and which one is decided at
+/// the end rather than guessed at the start: [`write`] emits a single group
+/// wrapping everything when the palette has no tokens — that group is the
+/// palette's name — and one group per token group when it does. So groups are
+/// collected as token groups throughout, and a file that turns out to have
+/// exactly one, containing everything, has it lifted to the palette name
+/// instead. Both shapes this crate writes therefore round-trip, and a file
+/// from Illustrator reads as whatever it actually is.
 pub fn read(bytes: &[u8]) -> Result<Palette> {
     let mut r = Reader { bytes, at: 0 };
 
@@ -137,7 +203,12 @@ pub fn read(bytes: &[u8]) -> Result<Palette> {
     let blocks = r.u32()?;
 
     let mut palette = Palette::new("Imported", Vec::new());
-    let mut named = false;
+    // The group currently open. Nested groups collapse onto the innermost
+    // name, since Pallet's tokens are two levels and a palette has no notion
+    // of a palette inside a palette.
+    let mut current: Option<String> = None;
+    let mut groups: Vec<String> = Vec::new();
+    let mut ungrouped = 0usize;
 
     for _ in 0..blocks {
         let kind = r.u16()?;
@@ -145,6 +216,7 @@ pub fn read(bytes: &[u8]) -> Result<Palette> {
         let body = r.take(length)?;
 
         if kind == BLOCK_GROUP_CLOSE {
+            current = None;
             continue;
         }
 
@@ -163,12 +235,11 @@ pub fn read(bytes: &[u8]) -> Result<Palette> {
 
         match kind {
             BLOCK_GROUP_OPEN => {
-                // The first group names the palette; nested groups are
-                // flattened, since Pallet has no notion of a palette inside a
-                // palette.
-                if !named {
-                    palette.name = name;
-                    named = true;
+                if !name.is_empty() {
+                    if !groups.contains(&name) {
+                        groups.push(name.clone());
+                    }
+                    current = Some(name);
                 }
             }
             BLOCK_COLOUR => {
@@ -197,12 +268,24 @@ pub fn read(bytes: &[u8]) -> Result<Palette> {
                         ));
                     }
                 };
+                if current.is_none() {
+                    ungrouped += 1;
+                }
                 palette.swatches.push(Swatch {
                     color,
                     name: (!name.is_empty()).then_some(name),
+                    group: current.clone(),
                 });
             }
             _ => {}
+        }
+    }
+
+    // One group holding everything is a palette name, not a token group.
+    if groups.len() == 1 && ungrouped == 0 && !palette.swatches.is_empty() {
+        palette.name = groups.remove(0);
+        for swatch in &mut palette.swatches {
+            swatch.group = None;
         }
     }
 

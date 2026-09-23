@@ -27,6 +27,9 @@ serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
 anyhow.workspace = true
+# Copying goes through the backend rather than `navigator.clipboard`, which
+# WebKitGTK grants far less readily than WebView2 — see `copy_text`.
+arboard.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 # `DwmFlush`, to order the window's hide before the picker's capture rather

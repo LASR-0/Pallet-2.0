@@ -9,10 +9,137 @@ import { el, spacer } from "../dom";
 import { onContextMenu } from "../menu";
 import { renderFilters } from "./filters";
 import { completionFor, filterByQuery, renderLibraryBar } from "./search";
-import type { ColourChip, PaletteCard } from "../state";
+import type { ColourChip, ImportState, PaletteCard } from "../state";
+
+/**
+ * What a library screen needs while Build is importing from it.
+ *
+ * Present only during an import; `null` the rest of the time, which is when
+ * the cards do their ordinary jobs.
+ */
+export interface ImportActions {
+  state: ImportState;
+  /** Ctrl-click: add to or remove from the selection, staying here. */
+  onToggle: (id: string) => void;
+  /** Plain click: the selection is over. The clicked row joins it if new. */
+  onFinish: (id: string) => void;
+  onCancel: () => void;
+}
+
+/**
+ * The bar that says the screen is being browsed on Build's behalf.
+ *
+ * Import mode changes what a click does, which is not something a screen may
+ * do quietly — every card here already had a meaning for a click, and it has
+ * been taken away for the moment.
+ */
+function importBanner(importing: ImportActions): HTMLElement {
+  const count = importing.state.selected.length;
+  const noun = importing.state.kind === "palette" ? "palette" : "colour";
+
+  return el(
+    "div",
+    {
+      style:
+        "display:flex;align-items:center;gap:9px;padding:9px 12px;" +
+        "border-radius:var(--rad2);background:var(--accentFaint);" +
+        "border:1px solid var(--accent);box-shadow:var(--lift)",
+    },
+    [
+      el("span", {
+        style: `font:500 10px/1 ${MONO};letter-spacing:.1em;color:var(--accent);flex:none`,
+        text: "IMPORT",
+      }),
+      el("span", {
+        style: `flex:1;min-width:0;font:400 10px/1.35 ${SANS};color:var(--mute)`,
+        text:
+          count > 0
+            ? `${count} ${noun}${count === 1 ? "" : "s"} chosen · click one more to finish`
+            : `Click a ${noun} to take it · ctrl-click to choose several`,
+      }),
+      el("span", {
+        class: "hv-copy clickable",
+        style:
+          `padding:4px 9px;border-radius:6px;font:400 9.5px/1 ${MONO};` +
+          "border-width:1px;border-style:solid;flex:none",
+        text: "Cancel",
+        onClick: () => importing.onCancel(),
+      }),
+    ],
+  );
+}
+
+/** What a click does to a card while an import is running. */
+function importClick(importing: ImportActions, id: string) {
+  return (event: MouseEvent) => {
+    // Ctrl on Windows and Linux, Cmd on a Mac keyboard: both mean "and also
+    // this one" everywhere else those platforms are used.
+    if (event.ctrlKey || event.metaKey) importing.onToggle(id);
+    else importing.onFinish(id);
+  };
+}
+
+/** The ring that marks a card as chosen. */
+function importRing(selected: boolean): string {
+  return selected
+    ? "box-shadow:var(--lift),0 0 0 2px var(--accent);"
+    : "box-shadow:var(--lift);";
+}
 
 const MONO = "var(--mono),monospace";
 const SANS = "var(--font),sans-serif";
+
+/**
+ * How long a single click waits to see whether a second one follows.
+ *
+ * A double-click delivers two `click` events before `dblclick`, so the single
+ * click's work has to be held back or copying would fire twice on the way to
+ * opening the colour. Windows' own double-click threshold defaults to 500ms,
+ * but that is the ceiling for deliberate double-clicks; 240ms covers the ones
+ * people actually perform while keeping a plain click from feeling laggy.
+ */
+const DOUBLE_CLICK_MS = 240;
+
+/** How long a copied swatch shows that it was copied. */
+const FLASH_MS = 420;
+
+/**
+ * Wire a swatch so a click copies its hex and a double-click opens it.
+ *
+ * Copy is the common case by a wide margin — a palette is a source of colours
+ * to paste elsewhere — so it gets the single click, and the rarer act of
+ * loading one into Current gets the deliberate one.
+ *
+ * Nothing on screen changes when a hex is copied, which would leave the click
+ * looking ignored, so the swatch is briefly ringed to acknowledge it.
+ */
+function copyOrOpen(
+  node: HTMLElement,
+  hex: string,
+  ring: string,
+  onCopy: (hex: string) => void,
+  onOpen: (hex: string) => void,
+): void {
+  let pending = 0;
+  let flash = 0;
+
+  node.addEventListener("click", () => {
+    window.clearTimeout(pending);
+    pending = window.setTimeout(() => {
+      onCopy(hex);
+      window.clearTimeout(flash);
+      node.style.boxShadow = `inset 0 0 0 2px var(--accent)`;
+      flash = window.setTimeout(() => {
+        node.style.boxShadow = ring;
+      }, FLASH_MS);
+    }, DOUBLE_CLICK_MS);
+  });
+
+  node.addEventListener("dblclick", () => {
+    window.clearTimeout(pending);
+    onOpen(hex);
+  });
+}
 
 /**
  * A name that becomes editable in place.
@@ -131,12 +258,15 @@ export function renderPalettes(
   actions: {
     onRenamePalette: (id: string, name: string) => void;
     onDeletePalette: (id: string) => void;
+    onCopy: (value: string) => void;
     facets: string[];
     sort: string;
     onToggleFacet: (id: string) => void;
     onClearFacets: () => void;
     onSort: (id: string) => void;
   },
+  /** Set while Build is importing whole palettes from here. */
+  importing?: ImportActions | null,
 ): HTMLElement {
   if (palettes === null) return empty("Loading…");
 
@@ -161,13 +291,21 @@ export function renderPalettes(
       (next) => actions.onRenamePalette(p.id, next),
     );
 
+    const chosen = importing?.state.selected.includes(p.id) ?? false;
+
     const node = el(
       "div",
       {
         class: "hv-card",
         style:
           "display:flex;flex-direction:column;gap:8px;padding:11px;border-radius:var(--rad2);" +
-          "background:var(--panel);border:1px solid var(--line)",
+          "background:var(--panel);border:1px solid var(--line);" +
+          importRing(chosen) +
+          (importing ? "cursor:pointer" : ""),
+        // While importing, the whole card is the target: the swatches inside
+        // it stop copying, so there is no part of a palette that does
+        // something other than choose it.
+        onClick: importing ? importClick(importing, p.id) : undefined,
       },
       [
         el(
@@ -175,15 +313,25 @@ export function renderPalettes(
           {
             style:
               "display:flex;border-radius:7px;overflow:hidden;height:72px;" +
-              "box-shadow:inset 0 0 0 1px rgba(0,0,0,.07)",
+              "box-shadow:inset 0 0 0 1px rgba(var(--swatchInk),.07)",
           },
-          p.colors.map((hex) =>
-            el("div", {
-              style: `flex:1;cursor:pointer;background:${hex}`,
-              title: hex,
-              onClick: () => onPickHex(hex),
-            }),
-          ),
+          p.colors.map((hex) => {
+            const swatch = el("div", {
+              style: `flex:1;background:${hex}${importing ? "" : ";cursor:pointer"}`,
+              // The tip has to teach this: a swatch that copies on click and
+              // opens on double-click looks exactly like one that opens on
+              // click, and there is nowhere else to say so.
+              title: importing
+                ? hex
+                : `${hex}\nClick to copy · double-click to open`,
+            });
+            // No resting ring of its own — the strip around all of them
+            // carries that — so the flash returns to nothing.
+            if (!importing) {
+              copyOrOpen(swatch, hex, "", actions.onCopy, onPickHex);
+            }
+            return swatch;
+          }),
         ),
         el("div", { style: "display:flex;align-items:baseline;gap:7px" }, [
           el("span", {
@@ -200,40 +348,49 @@ export function renderPalettes(
       ],
     );
 
-    onContextMenu(node, () => [
-      { label: "Rename", onSelect: () => beginEdit(name) },
-      {
-        label: "Delete palette",
-        destructive: true,
-        onSelect: () => actions.onDeletePalette(p.id),
-      },
-    ]);
+    // No menu while importing: renaming or deleting a palette the user is in
+    // the middle of choosing is not something they came here to do.
+    if (!importing) {
+      onContextMenu(node, () => [
+        { label: "Rename", onSelect: () => beginEdit(name) },
+        {
+          label: "Delete palette",
+          destructive: true,
+          onSelect: () => actions.onDeletePalette(p.id),
+        },
+      ]);
+    }
     return node;
   };
 
   paint(query);
 
-  return el("div", { style: "display:flex;flex-direction:column;gap:12px" }, [
-    renderLibraryBar(
-      "PALETTES LIBRARY",
-      palettes.length,
-      query,
-      "Search palettes",
-      {
-        complete: (q) => completionFor(q, names),
-        onQuery: (q) => {
-          paint(q);
-          search.onQuery(q);
+  return el(
+    "div",
+    { style: "display:flex;flex-direction:column;gap:12px" },
+    [
+      importing ? importBanner(importing) : null,
+      renderLibraryBar(
+        "PALETTES LIBRARY",
+        palettes.length,
+        query,
+        "Search palettes",
+        {
+          complete: (q) => completionFor(q, names),
+          onQuery: (q) => {
+            paint(q);
+            search.onQuery(q);
+          },
         },
-      },
-    ),
-    renderFilters("palettes", actions.facets, actions.sort, {
-      onToggle: actions.onToggleFacet,
-      onSort: actions.onSort,
-      onClearFacets: actions.onClearFacets,
-    }),
-    results,
-  ]);
+      ),
+      renderFilters("palettes", actions.facets, actions.sort, {
+        onToggle: actions.onToggleFacet,
+        onSort: actions.onSort,
+        onClearFacets: actions.onClearFacets,
+      }),
+      results,
+    ].filter((c): c is HTMLElement => c !== null),
+  );
 }
 
 export function renderColours(
@@ -254,6 +411,8 @@ export function renderColours(
     naming: string | null;
     onNamed: () => void;
   },
+  /** Set while Build is importing single colours from here. */
+  importing?: ImportActions | null,
 ): HTMLElement {
   if (colours === null) return empty("Loading…");
 
@@ -275,6 +434,8 @@ export function renderColours(
             actions.onRenameColour(c.id, next),
           );
 
+    const chosen = importing?.state.selected.includes(c.id) ?? false;
+
     const node = el(
       "div",
       {
@@ -282,14 +443,17 @@ export function renderColours(
         style:
           "display:flex;flex-direction:column;align-items:center;gap:6px;" +
           "padding:12px 6px 10px;border-radius:var(--rad2);background:var(--panel);" +
-          "border:1px solid var(--line);cursor:pointer",
-        onClick: () => onPickHex(c.hex),
+          "border:1px solid var(--line);cursor:pointer;" +
+          importRing(chosen),
+        onClick: importing
+          ? importClick(importing, c.id)
+          : () => onPickHex(c.hex),
       },
       [
         el("div", {
           style:
             `width:46px;height:46px;border-radius:50%;background:${c.hex};` +
-            "box-shadow:inset 0 0 0 1px rgba(0,0,0,.08)",
+            "box-shadow:inset 0 0 0 1px rgba(var(--swatchInk),.08)",
         }),
         name,
         el("span", {
@@ -299,15 +463,18 @@ export function renderColours(
       ],
     );
 
-    onContextMenu(node, () => [
-      { label: "Rename", onSelect: () => beginEdit(name) },
-      { label: "Copy hex", onSelect: () => actions.onCopy(c.hex) },
-      {
-        label: "Delete colour",
-        destructive: true,
-        onSelect: () => actions.onDeleteColour(c.id),
-      },
-    ]);
+    // No menu while importing, as on the palette cards above.
+    if (!importing) {
+      onContextMenu(node, () => [
+        { label: "Rename", onSelect: () => beginEdit(name) },
+        { label: "Copy hex", onSelect: () => actions.onCopy(c.hex) },
+        {
+          label: "Delete colour",
+          destructive: true,
+          onSelect: () => actions.onDeleteColour(c.id),
+        },
+      ]);
+    }
     return node;
   };
 
@@ -328,25 +495,30 @@ export function renderColours(
   };
   paint(query);
 
-  return el("div", { style: "display:flex;flex-direction:column;gap:12px" }, [
-    renderLibraryBar(
-      "COLOURS LIBRARY",
-      colours.length,
-      query,
-      "Search colours",
-      {
-        complete: (q) => completionFor(q, names),
-        onQuery: (q) => {
-          paint(q);
-          search.onQuery(q);
+  return el(
+    "div",
+    { style: "display:flex;flex-direction:column;gap:12px" },
+    [
+      importing ? importBanner(importing) : null,
+      renderLibraryBar(
+        "COLOURS LIBRARY",
+        colours.length,
+        query,
+        "Search colours",
+        {
+          complete: (q) => completionFor(q, names),
+          onQuery: (q) => {
+            paint(q);
+            search.onQuery(q);
+          },
         },
-      },
-    ),
-    renderFilters("colours", actions.facets, actions.sort, {
-      onToggle: actions.onToggleFacet,
-      onSort: actions.onSort,
-      onClearFacets: actions.onClearFacets,
-    }),
-    results,
-  ]);
+      ),
+      renderFilters("colours", actions.facets, actions.sort, {
+        onToggle: actions.onToggleFacet,
+        onSort: actions.onSort,
+        onClearFacets: actions.onClearFacets,
+      }),
+      results,
+    ].filter((c): c is HTMLElement => c !== null),
+  );
 }

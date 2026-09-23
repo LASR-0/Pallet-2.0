@@ -37,7 +37,13 @@ pallet-core = { path = "crates/pallet-core" }
 thiserror = "2.0.20"
 anyhow = "1.0.104"
 serde = { version = "1.0.229", features = ["derive"] }
-serde_json = "1.0.151"
+# `preserve_order` makes `serde_json::Map` keep insertion order instead of
+# sorting keys. The design-token export builds its object by hand and has to
+# come out in palette order, as every other format does — alphabetising it
+# would silently reorder the palette the user arranged. Nothing else here
+# depends on map order: every other use serialises a struct, whose field order
+# comes from the struct either way.
+serde_json = { version = "1.0.151", features = ["preserve_order"] }
 toml = "1.1"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }

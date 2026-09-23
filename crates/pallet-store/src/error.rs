@@ -35,6 +35,34 @@ pub enum Error {
         /// The identifier that missed.
         id: String,
     },
+
+    /// A shared library file could not be read or written as JSON.
+    #[error("that file is not a Pallet library: {0}")]
+    Bundle(#[from] serde_json::Error),
+
+    /// The bundle was written by a Pallet newer than this one.
+    ///
+    /// Worth its own variant rather than a parse failure: the file is not
+    /// corrupt and the user has done nothing wrong, so the message has to say
+    /// "update Pallet" rather than "this is broken".
+    #[error(
+        "this library was shared from a newer Pallet (format {found}; this build reads up to {supported})"
+    )]
+    BundleTooNew {
+        /// The format the file declares.
+        found: u32,
+        /// The newest format this build understands.
+        supported: u32,
+    },
+
+    /// A colour in a bundle did not carry a readable hex value.
+    #[error("the shared library has a colour with an unreadable value: {id} is `{value}`")]
+    BadBundleColour {
+        /// The colour's identifier, so the offending entry can be found.
+        id: String,
+        /// What was there instead of `#RRGGBB`.
+        value: String,
+    },
 }
 
 /// Convenience alias for fallible storage operations.
