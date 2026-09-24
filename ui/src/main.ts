@@ -7,7 +7,7 @@ import { renderCurrent } from "./screens/current";
 import { installMenuDismiss } from "./menu";
 import { installTooltips } from "./tooltip";
 import { renderBuild } from "./screens/build";
-import { previewPairs } from "./screens/preview";
+import { previewPairs, rolesFor } from "./screens/preview";
 import { renderPick } from "./screens/pick";
 import { renderSettings } from "./screens/settings";
 import { renderColours, renderPalettes } from "./screens/library";
@@ -21,6 +21,7 @@ import {
   type AppState,
   type Harmony,
   type ImportKind,
+  type Scene,
   type Screen,
   type ShareReport,
 } from "./state";
@@ -41,6 +42,8 @@ const state: AppState = {
     tokens: [],
     roles: {},
     medium: null,
+    imageScene: "poster",
+    webScene: "page",
     verdicts: null,
     choosingRole: null,
     name: "",
@@ -143,6 +146,16 @@ function body(): HTMLElement {
           // by hex and resolved against the palette when drawn.
           void judgeRoles();
         },
+        onClearPalette: () => {
+          state.build.colours = [];
+          state.build.tokens = [];
+          state.build.error = null;
+          // The name stays. Emptying the strip is usually the first half of
+          // re-picking the same palette, and retyping its name would be a
+          // second thing to redo that was never asked about.
+          render();
+          void judgeRoles();
+        },
         onToken: (index, text) => {
           state.build.tokens[index] = text;
           // Deliberately no re-render: the field updates itself, and replacing
@@ -153,12 +166,50 @@ function body(): HTMLElement {
         onMedium: (medium) => {
           if (medium === state.build.medium) return;
           state.build.medium = medium;
-          // The two media have different roles, so an assignment made under
-          // one means nothing under the other — `background` is the only name
-          // they share, and it is not the same slot.
-          state.build.roles = {};
-          state.build.verdicts = null;
+          // Roles are kept. The two media share no role names — a stylesheet
+          // has a surface and a border, a picture has values — so one
+          // medium's assignments are invisible under the other rather than
+          // wrong, and coming back to a card you had already dressed beats
+          // being made to dress it again for having looked at the poster.
           state.build.choosingRole = null;
+          // Dropped rather than left up while the new set is fetched: they are
+          // judgements on pairings this medium does not have, and a row
+          // labelled "Body on surface" under a poster is worse than a gap.
+          state.build.verdicts = null;
+          render();
+          void judgeRoles();
+        },
+        onScene: (scene) => {
+          if (scene === activeScene()) return;
+          // Written back to the medium it belongs to, so each keeps its own
+          // subject and neither can be left pointing at the other's.
+          if (scene === "poster" || scene === "composition") {
+            state.build.imageScene = scene;
+          } else {
+            state.build.webScene = scene;
+          }
+          // Roles survive: a medium's subjects are built from the same roles,
+          // and carrying the assignments over is what makes the switch worth
+          // having — the same palette, asked a different question.
+          state.build.choosingRole = null;
+          // The pairings do change — a portrait has no lettering, a poster has
+          // no figure, and a components sheet has no page behind it — so the
+          // old verdicts go and a new set is asked for.
+          state.build.verdicts = null;
+          render();
+          void judgeRoles();
+        },
+        onClearRoles: () => {
+          const medium = state.build.medium;
+          if (!medium) return;
+          // Only the roles this medium shows. The other medium's assignments
+          // are kept across the switch now, so emptying them from behind a
+          // control the user cannot see would be a deletion they never made.
+          for (const [id] of rolesFor(medium, activeScene())) {
+            delete state.build.roles[id];
+          }
+          state.build.choosingRole = null;
+          state.build.verdicts = null;
           render();
         },
         onChooseRole: (role) => {
@@ -622,6 +673,20 @@ function importActions(): ImportActions | null {
 }
 
 /**
+ * Which subject the preview is showing, which follows from the medium.
+ *
+ * The two are stored apart so that each medium keeps its own, and joined only
+ * where something needs to know what is actually on screen. `poster` while no
+ * medium has been chosen is arbitrary and unused: nothing is drawn yet, and
+ * `previewPairs` returns nothing for a null medium anyway.
+ */
+function activeScene(): Scene {
+  return state.build.medium === "image"
+    ? state.build.imageScene
+    : state.build.webScene;
+}
+
+/**
  * Ask the backend what the preview's pairings come to.
  *
  * Called whenever the roles change and whenever a colour leaves the palette,
@@ -632,6 +697,7 @@ function importActions(): ImportActions | null {
 async function judgeRoles(): Promise<void> {
   const pairs = previewPairs(
     state.build.medium,
+    activeScene(),
     state.build.roles,
     state.build.colours,
   );

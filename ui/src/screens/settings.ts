@@ -69,20 +69,29 @@ function settingRow(
   );
 }
 
-/** A small filled button, for the two things the sharing panel does. */
+/**
+ * A small filled button, for the three things the sharing panel does.
+ *
+ * Raised on its lip like everything else that acts. The vertical padding is
+ * two pixels under what the flat version used, which the border pays back, so
+ * the rows it sits in are the height they always were. Busy or unavailable, it
+ * keeps the shape and loses the lip: a raised edge says the button can be
+ * pressed, and while the share is running it cannot.
+ */
 function button(
   label: string,
   enabled: boolean,
   onClick: () => void,
 ): HTMLElement {
   return el("span", {
-    class: enabled ? "clickable" : undefined,
+    class: enabled ? "btn3d btn3d-fill clickable" : "btn3d",
     style:
-      `padding:6px 11px;border-radius:7px;font:500 9.5px/1 ${MONO};` +
+      `padding:4px 11px;border-radius:7px;font:500 9.5px/1 ${MONO};` +
       "letter-spacing:.07em;white-space:nowrap;" +
       (enabled
-        ? "background:var(--accent);color:var(--accentInk);"
-        : "background:var(--hover);color:var(--mute);cursor:default;opacity:.6"),
+        ? ""
+        : "background:var(--hover);color:var(--mute);border-color:transparent;" +
+          "cursor:default;opacity:.6"),
     text: label,
     onClick: enabled ? onClick : undefined,
   });
@@ -194,16 +203,43 @@ export function renderSettings(
     });
   }
 
-  const pill = (text: string, on: boolean, editable: boolean, onClick?: () => void) =>
+  /**
+   * A setting's current value, and the thing you press to change it.
+   *
+   * Raised whenever it can be pressed — filled on its accent lip when the
+   * setting is on, and on a hairline one when it is off, since an off setting
+   * is still a button. A value that cannot be changed keeps the shape and
+   * loses the lip, so the screen can be read for which of these are controls
+   * and which are only saying what is.
+   */
+  const pill = (
+    text: string,
+    on: boolean,
+    editable: boolean,
+    onClick?: () => void,
+  ) =>
     el("span", {
-      class: editable ? "clickable" : undefined,
+      class: editable
+        ? on
+          ? "btn3d btn3d-fill clickable"
+          : "btn3d clickable"
+        : "btn3d",
       style:
-        `padding:5px 9px;border-radius:6px;font:500 9.5px/1 ${MONO};` +
+        // A pixel under the button's, the pair having always differed by one.
+        `padding:3px 9px;border-radius:6px;font:500 9.5px/1 ${MONO};` +
         "letter-spacing:.07em;white-space:nowrap;" +
-        (on
-          ? "background:var(--accent);color:var(--accentInk);"
-          : "background:var(--hover);color:var(--mute);") +
-        (editable ? "" : "opacity:.6;cursor:default"),
+        (on && editable
+          ? ""
+          : on
+            ? "background:var(--accent);color:var(--accentInk);"
+            : "background:var(--hover);color:var(--mute);") +
+        (editable
+          ? on
+            ? ""
+            : // The same lip the filled one has, under a face that is not
+              // filled: what the pill does does not change with the setting.
+              "border-color:var(--line) var(--line) var(--accentLip);"
+          : "border-color:transparent;opacity:.6;cursor:default"),
       text,
       title: editable ? "Click to change" : undefined,
       onClick,

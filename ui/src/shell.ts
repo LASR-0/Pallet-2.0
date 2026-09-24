@@ -243,10 +243,19 @@ function tabs(state: AppState, onTab: (screen: Screen) => void) {
     },
     TABS.flatMap(([id, label]) => {
       const on = state.screen === id;
+      // Raised like Build's buttons: the selected tab is the same filled face
+      // over a darker lip. Every tab carries the geometry and only the
+      // selected one colours it in — an unselected tab's borders are there but
+      // transparent, so moving along the strip does not make it breathe.
+      //
+      // The vertical padding drops from 6px to 4px to pay for the border the
+      // shape now has. The strip is the height it always was, and the label
+      // sits on the face rather than being centred through the lip.
+      const cls = on ? "btn3d btn3d-fill" : "btn3d";
       const style =
-        "padding:6px 9px;border-radius:7px;cursor:pointer;white-space:nowrap;" +
+        "padding:4px 9px;border-radius:7px;cursor:pointer;white-space:nowrap;" +
         `font:${on ? "600" : "400"} 11px/1 ${SANS};letter-spacing:.01em;` +
-        (on ? "background:var(--accent);color:var(--accentInk);" : "color:var(--mute);");
+        (on ? "" : "color:var(--mute);border-color:transparent;");
 
       if (id === "settings") {
         // Pushed to the far right by a spacer, away from the five screens:
@@ -260,6 +269,7 @@ function tabs(state: AppState, onTab: (screen: Screen) => void) {
           el(
             "div",
             {
+              class: cls,
               // Dimmed while unselected: a filled shape carries far more
               // weight than a word at the same colour, so an unselected cog at
               // full `--mute` shouts louder than the labels beside it.
@@ -274,7 +284,9 @@ function tabs(state: AppState, onTab: (screen: Screen) => void) {
         ];
       }
 
-      return [el("div", { style, text: label, onClick: () => onTab(id) })];
+      return [
+        el("div", { class: cls, style, text: label, onClick: () => onTab(id) }),
+      ];
     }),
   );
 

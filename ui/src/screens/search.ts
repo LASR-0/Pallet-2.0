@@ -82,12 +82,14 @@ export interface SearchActions {
 }
 
 /**
- * The library's heading and its search field, as one bar.
+ * The library's search field.
  *
- * They were two stacked bars saying much the same thing. Merged, the heading
- * names the collection, the field searches it, and the count on the right
- * belongs to both — one row instead of two, in a window where vertical space
- * is the scarce thing.
+ * It was a heading and a field, and before that two stacked bars saying much
+ * the same thing. The heading has gone the same way as the first merge: the
+ * tab strip a few pixels above already says which collection this is, and
+ * "PALETTES LIBRARY" over the palettes tab was the window telling the user
+ * something they had just clicked. What is left is the icon, the field and the
+ * count — which now belongs plainly to the collection being searched.
  *
  * The input element is created once and never replaced. Re-rendering the whole
  * screen on each keystroke — the pattern used everywhere else in this app —
@@ -96,7 +98,6 @@ export interface SearchActions {
  * still, so it owns its own DOM and only tells the caller the query changed.
  */
 export function renderLibraryBar(
-  heading: string,
   count: number,
   query: string,
   placeholder: string,
@@ -188,22 +189,9 @@ export function renderLibraryBar(
   field.append(ghost, input);
 
   shell.append(
-    el("span", {
-      // Nudged down a pixel. All-caps text has no descenders, so centring its
-      // box puts the letters above the centre line that the icon and the
-      // mixed-case field share.
-      style:
-        `font:400 10px/1 ${MONO};letter-spacing:.14em;color:var(--mute);` +
-        "flex:none;position:relative;top:1px",
-      text: heading,
-    }),
     el("div", { style: "color:var(--mute);display:flex;flex:none" }, [
       searchIcon(),
     ]),
-    el("span", {
-      style: `font:400 11.5px/1 ${SANS};color:var(--mute);flex:none`,
-      text: ":",
-    }),
     field,
     el("span", {
       style: `font:400 10px/1 ${MONO};color:var(--mute);flex:none`,

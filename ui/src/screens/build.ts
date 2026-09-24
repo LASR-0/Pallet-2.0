@@ -67,6 +67,8 @@ export interface BuildActions {
   onPickNext: () => void;
   onSave: () => void;
   onRemove: (index: number) => void;
+  /** Take every colour off the strip at once. */
+  onClearPalette: () => void;
   onRename: (name: string) => void;
   /** Enter in the name field: save with whatever is there. */
   onSubmitName: () => void;
@@ -165,6 +167,55 @@ function sectionHeading(
   ]);
 }
 
+/**
+ * The Clear pill, exactly as the filter rail draws it.
+ *
+ * Filled with the accent and lettered in `--accentInk`, because it undoes work
+ * rather than selecting something — the same argument `.pl-clear` makes at
+ * length in `base.css`, and the reason this borrows that class instead of
+ * inventing a third destructive-looking control.
+ *
+ * Both of the things it clears here are cheap to rebuild — a palette is
+ * re-picked in one pass, a role in one click — so neither asks for
+ * confirmation. The title says how much is about to go, which is as much
+ * warning as an undoable action of this size warrants.
+ */
+function clearPill(title: string, onClick: () => void): HTMLElement {
+  return el("span", {
+    class: "btn3d btn3d-fill clickable",
+    style:
+      "flex:none;padding:5px 11px;border-radius:999px;" +
+      `font:500 10px/1 ${MONO};letter-spacing:.06em`,
+    text: "Clear",
+    title,
+    onClick,
+  });
+}
+
+/** What the ROLES heading carries: how many are filled, and a way to empty them. */
+function rolesHeading(
+  filled: number,
+  total: number,
+  onClear: () => void,
+): HTMLElement {
+  return el(
+    "div",
+    { style: "display:flex;align-items:center;gap:8px;flex:none" },
+    [
+      el("span", {
+        style: `font:400 9px/1 ${MONO};color:var(--mute)`,
+        text: `${filled} of ${total}`,
+      }),
+      filled > 0
+        ? clearPill(
+            filled === 1 ? "Unassign the role" : `Unassign all ${filled} roles`,
+            onClear,
+          )
+        : null,
+    ].filter((c): c is HTMLElement => c !== null),
+  );
+}
+
 /** The plus on the strip's tail panel, drawn for the same reason as the gear. */
 function plusIcon(): SVGElement {
   const icon = svg("svg", {
@@ -211,6 +262,8 @@ export function renderBuild(
     tokens,
     roles,
     medium,
+    imageScene,
+    webScene,
     verdicts,
     choosingRole,
     name,
@@ -223,6 +276,11 @@ export function renderBuild(
     formats,
     exported,
   } = build;
+
+  // Which subject is on screen follows from the medium, so the two are kept
+  // apart in the state and joined here: switching medium should land on the
+  // scene that medium was last showing, not on whichever was picked last.
+  const scene = medium === "image" ? imageScene : webScene;
 
   const full = colours.length >= capacity;
   // The tail is the whole strip while the palette is empty, and goes away
@@ -388,7 +446,18 @@ export function renderBuild(
         style: `font:400 10px/1 ${MONO};color:var(--mute);flex:none`,
         text: `${colours.length} / ${capacity}`,
       }),
-    ],
+      // Beside the count rather than down with Pick and Save: it belongs to
+      // the number it empties, and a third button in that row would put a
+      // destructive control a few pixels from the one that saves.
+      colours.length > 0
+        ? clearPill(
+            colours.length === 1
+              ? "Remove the colour"
+              : `Remove all ${colours.length} colours`,
+            actions.onClearPalette,
+          )
+        : null,
+    ].filter((c): c is HTMLElement => c !== null),
   );
   if (needsName) {
     // Saving an unnamed palette lands here rather than in the library under
@@ -401,12 +470,15 @@ export function renderBuild(
   const actionsRow = el("div", { style: "display:flex;gap:8px" }, [
     el("div", {
       // The one filled button on the screen, so it matches the filled tab and
-      // the Clear pill rather than being a fourth kind of fill.
+      // the Clear pill rather than being a fourth kind of fill. Raised while
+      // it can be pressed; a full palette keeps the shape and loses the lip,
+      // since a button standing proud of the page is a promise it can act.
+      class: full ? "btn3d" : "btn3d btn3d-fill clickable",
       style:
         "flex:1;padding:11px;text-align:center;border-radius:8px;" +
         (full
-          ? "background:var(--hover);color:var(--mute);cursor:default;"
-          : "background:var(--accent);color:var(--accentInk);cursor:pointer;") +
+          ? "background:var(--hover);color:var(--mute);border-color:var(--line);cursor:default;"
+          : "cursor:pointer;") +
         `font:500 11.5px/1 ${SANS};letter-spacing:.03em`,
       // One press now gathers the rest of the palette in a single pass, so
       // "next colour" would undersell what the button does.
@@ -420,13 +492,14 @@ export function renderBuild(
       onClick: full || picking ? undefined : actions.onPickNext,
     }),
     el("div", {
-      class: canSave ? "hv-copy clickable" : undefined,
+      class: canSave ? "btn3d btn3d-line clickable" : "btn3d",
       style:
         "padding:11px 14px;text-align:center;border-radius:8px;" +
-        "border-width:1px;border-style:solid;" +
         `font:500 11.5px/1 ${SANS};` +
-        // While it can be saved, `.hv-copy` owns the colours so its hover rule
-        // can win; while it cannot, they are stated here and stay put.
+        // While it can be saved, `.btn3d-line` owns the colours so its hover
+        // rule can win; while it cannot, they are stated here and stay put —
+        // including the lip, which goes back to a hairline, because a raised
+        // edge on a button that does nothing would be the wrong promise.
         (canSave
           ? "cursor:pointer;"
           : "color:var(--mute);border-color:var(--line);opacity:.45;cursor:default;"),
@@ -578,6 +651,7 @@ export function renderBuild(
   // and whether the pairings it produces are actually readable.
   const preview = renderPreview(
     medium,
+    scene,
     colours,
     roles,
     verdicts,
@@ -601,7 +675,17 @@ export function renderBuild(
             medium && preview.roles
               ? sectionHeading(
                   "ROLES",
-                  `${filledRoles(medium, roles, colours)} of ${rolesFor(medium).length}`,
+                  undefined,
+                  // The count, and — once there is anything to undo — the pill
+                  // that empties it. Clearing here only lets go of the roles
+                  // this medium has: the other medium's assignments are still
+                  // sitting behind the switch, and this is not a control for
+                  // reaching through it.
+                  rolesHeading(
+                    filledRoles(medium, scene, roles, colours),
+                    rolesFor(medium, scene).length,
+                    actions.onClearRoles,
+                  ),
                 )
               : null,
             preview.roles,

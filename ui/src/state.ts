@@ -130,6 +130,42 @@ export function parseToken(text: string): Token {
  */
 export type Medium = "web" | "image";
 
+/**
+ * Which picture the image preview draws.
+ *
+ * Two people reach for a palette as colour rather than as tokens and they are
+ * not asking the same question. A designer wants to know whether it holds a
+ * layout together — flat areas, a focal shape, lettering on a band. A painter
+ * wants to know whether it holds a subject together — whether the values still
+ * separate once they are the light and shade of one form. The poster answers
+ * the first and the portrait the second.
+ *
+ * Both are built from the same five roles, so this is a change of subject and
+ * not of vocabulary: switching keeps every assignment, which is the point —
+ * seeing one palette do both jobs is the comparison worth having.
+ */
+export type ImageScene = "poster" | "composition";
+
+/**
+ * Which stylesheet the web preview draws.
+ *
+ * The same argument as the pictures, one level along: a palette that holds a
+ * marketing page together can still fall apart in a dense interface, where the
+ * colours stop being areas and start being states. So `page` asks whether the
+ * hierarchy reads — headline, body, secondary copy, a call to action, a
+ * gradient — and `app` asks whether the controls do: a selected row, a focused
+ * field, an invalid one, a disabled button, a badge.
+ *
+ * `components` is the third and is deliberately not a scene. It is the sheet
+ * every design system ends up drawing: each control in each state, side by
+ * side, with nothing around it. It answers the question the other two cannot,
+ * which is whether one ink colour works on all five fills at once.
+ */
+export type WebScene = "page" | "app" | "components";
+
+/** Either medium's subject. Which half is meaningful follows from the medium. */
+export type Scene = ImageScene | WebScene;
+
 /** Which colour does which job. Values are hexes from the palette. */
 export type Roles = Record<string, string | undefined>;
 
@@ -200,10 +236,22 @@ export interface BuildState {
   /**
    * What the palette is for, which decides what the preview draws.
    *
-   * `null` until chosen. Roles are per-medium, so changing it clears them
-   * rather than carrying assignments onto slots that do not exist.
+   * `null` until chosen. Changing it keeps the roles: the two media share no
+   * role names, so each one's assignments are simply invisible while the
+   * other is on screen, and switching back finds them where they were left.
    */
   medium: Medium | null;
+  /**
+   * Which subject each medium draws. One per medium rather than one shared,
+   * so moving between them does not land you on whichever was picked last.
+   *
+   * Both outlive the palette on purpose, unlike the roles and the medium:
+   * which subject you want to see is a fact about the person, not about what
+   * they are building, and a painter should not have to say so again for
+   * every palette.
+   */
+  imageScene: ImageScene;
+  webScene: WebScene;
   /** The last judgements returned for the current roles, or null while none. */
   verdicts: ContrastVerdict[] | null;
   /** Which role's colour is being chosen, if any. */

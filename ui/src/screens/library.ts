@@ -371,7 +371,6 @@ export function renderPalettes(
     [
       importing ? importBanner(importing) : null,
       renderLibraryBar(
-        "PALETTES LIBRARY",
         palettes.length,
         query,
         "Search palettes",
@@ -501,7 +500,6 @@ export function renderColours(
     [
       importing ? importBanner(importing) : null,
       renderLibraryBar(
-        "COLOURS LIBRARY",
         colours.length,
         query,
         "Search colours",

@@ -44,6 +44,17 @@
      text already had. */
   --accentSoft: rgba(200, 125, 91, 0.16);
   --accentFaint: rgba(200, 125, 91, 0.07);
+  /* The lip under a raised button: hsl(19, 50%, 30%), the accent's own hue and
+     saturation taken a step below `--accentDeep` — the shadow the button casts
+     on the paper it is standing on.
+
+     Below rather than at, because `--accentDeep` is already where a filled
+     button's hover goes — a lip drawn in it would be the same colour as the
+     face it is meant to be under the moment the pointer arrived, and the
+     button would flatten exactly when it was being aimed at.
+
+     Studio's goes the other way entirely, and says why. */
+  --accentLip: #874d33;
   /* What is lettered *on* a fill of `--accent` or `--accentDeep`: the selected
      tab, the Clear pill, Build's pick button, a lit settings pill, the medium
      chooser. White, which is what all five of those said literally before this
@@ -75,6 +86,26 @@
      cross is still comfortable — it was 6.7:1, which was more than a 12px
      glyph needed. */
   --danger: #b93d2c;
+  /* The portrait preview's three values and the ground behind them, used for
+     whichever roles have not been assigned yet.
+
+     The preview's other stand-ins are ordinary tokens — `--panel` for the lit
+     value, `--ink` for the dark one — which is the right instinct: an
+     unassigned slot should read as Pallet's colour rather than as a colour the
+     user chose. It only works while the picture can survive the themes swapping
+     those two over, and every token in this file does swap: `--panel` is the
+     lightest thing on Sketchbook and nearly the darkest on Studio.
+
+     A poster survives it. Dark paper with a pale band is a poster somebody
+     might have printed on purpose. A face does not: inverted, the hair goes
+     white and the lit cheek goes black, and the result reads as a photographic
+     negative rather than as a painting hanging in a dark room. So these four
+     are written out per theme with their order kept — the light value is the
+     lightest in both, and Studio's ladder is this one in blue. */
+  --portraitLight: #fffcf6;
+  --portraitMid: #b9957a;
+  --portraitDark: #3a342c;
+  --portraitGround: #ecdfc9;
   --rad: 20px;
   --rad2: 16px;
   --font: "Karla";
@@ -155,6 +186,22 @@
      a tint. */
   --accentSoft: rgba(53, 143, 222, 0.22);
   --accentFaint: rgba(53, 143, 222, 0.09);
+  /* The button lip — and the one token in this pair that goes the other way.
+     Sketchbook's is darker than its button; this one is lighter.
+
+     A raised edge is only ever a claim about where the light is. On paper the
+     lip is the shadow the button casts on the page, so it darkens. On a page
+     this dark there is no shadow to cast: the page is already darker than
+     anything standing on it, and an edge darker still reads as a hole cut
+     round the button rather than as a button sitting on top. What does read is
+     the light catching the lip, which means going up.
+
+     `--accentInk` rather than a lighter blue mixed for the purpose: it is
+     already the colour of the letters on the face, so the lit edge and the
+     lettering are the same light, and the button reads as one object under one
+     lamp. It also cannot be swallowed by the hover fill, which on this theme
+     is the darkest the button ever gets. */
+  --accentLip: #8aa9c7;
   /* As on Sketchbook: what is lettered on an `--accent` or `--accentDeep`
      fill. White here too, so this changes nothing today.
 
@@ -184,6 +231,19 @@
      orange in it. White on it is 4.2:1 — matching what the old value gave, and
      well past the 3:1 a glyph of this weight needs. */
   --danger: #dd473c;
+  /* Sketchbook's portrait ladder in this theme's blue, and the one place where
+     "the same relationship, restated" beats "the same token". See Sketchbook
+     for why these are written out rather than borrowed.
+
+     The values keep their order — shadow is the dark blue, light is the light
+     blue — so the head reads the same way in both themes. The ground is the
+     one judgement call: pale enough to throw the silhouette at 3.5:1, dark
+     enough that the preview still looks like a picture in a dark window rather
+     than a light panel cut into one. */
+  --portraitLight: #cce3fa;
+  --portraitMid: #5e82ab;
+  --portraitDark: #0b1220;
+  --portraitGround: #456d99;
   --rad: 22px;
   --rad2: 18px;
   --font: "Sora";

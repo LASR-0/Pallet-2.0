@@ -288,7 +288,7 @@ export function renderFilters(
   if (active.length > 0) {
     rail.append(
       el("span", {
-        class: "pl-pop pl-clear clickable",
+        class: "pl-pop pl-clear btn3d btn3d-fill clickable",
         // Filled with the accent and lettered in white, the same treatment the
         // selected tab gets: this is the one control on the row that acts
         // rather than selects, and an outline put it in the same register as
@@ -296,12 +296,12 @@ export function renderFilters(
         // 400 — DM Mono's other cut — because white on the accent is a softer
         // contrast than ink on paper and a 10px line needs the help.
         //
-        // Colours live in `.pl-clear` so its hover has something to override.
+        // Colours and the raised edge live in `.btn3d-fill`, so this is the
+        // same button as Build's; `.pl-clear` carries only its position.
         style:
           "position:absolute;left:0;top:50%;transform:translateY(-50%);z-index:2;" +
           "padding:5px 11px;border-radius:999px;" +
-          `font:500 10px/1 ${MONO};letter-spacing:.06em;` +
-          "border-width:1px;border-style:solid",
+          `font:500 10px/1 ${MONO};letter-spacing:.06em`,
         text: "Clear",
         title:
           active.length === 1

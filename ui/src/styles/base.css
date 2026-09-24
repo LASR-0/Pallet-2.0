@@ -215,19 +215,14 @@ body {
   border-color: var(--accent);
 }
 
-/* Clear, sitting over the faded left edge of the filter rail. Filled with the
-   accent and lettered in white, matching the selected tab: it undoes work, so
-   it reads as a button rather than as another tag. The border is the fill's own
-   colour — invisible, and there only so the pill keeps the geometry it had as
-   an outline. */
-.pl-clear {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--accentInk);
-  transition:
-    background 0.14s ease,
-    border-color 0.14s ease;
-}
+/* Clear, sitting over the faded left edge of the filter rail.
+ *
+ * Its colours are `.btn3d-fill`'s, which it is always worn with: it undoes
+ * work, so it reads as a button rather than as another tag, and it should be
+ * the same button as the ones on Build. What is left here is only what is true
+ * of this pill and not of those — that it is positioned over the rail, and so
+ * needs its own way of arriving.
+ */
 
 /* Its own keyframes, because it is centred with `translateY(-50%)` and a
    plain `scale()` animation would drop that and let it jump down half its
@@ -245,13 +240,79 @@ body {
 .pl-clear.pl-pop {
   animation: pl-pop-centred 0.16s cubic-bezier(0.2, 0.9, 0.3, 1.2);
 }
+/* Raised buttons.
+ *
+ * The bottom border is thicker than the other three and drawn in `--accentLip`,
+ * which is a step darker than the accent on Sketchbook and a step lighter on
+ * Studio — a lip is a claim about where the light is, and that claim is not the
+ * same on paper as it is in the dark. Where the border wraps
+ * the corners it tapers from three pixels to one, which is what gives the edge
+ * its curve and the face the look of sitting on top of something rather than
+ * being painted on the page.
+ *
+ * Pressing swaps the thick edge to the top rather than removing it. The box
+ * keeps its height either way, so a button in a row cannot shove its neighbour
+ * sideways while it is held down, and the face slides two pixels into the
+ * shadow it was standing on — which is the whole illusion.
+ *
+ * Applied to the controls that act — Build's pick button, its save, the Clear
+ * pills, Settings' share buttons and the pills that change a setting — and to
+ * the tabs, where the selected one is the same raised face and the rest carry
+ * the geometry with their borders left transparent, so the strip does not
+ * change height as the selection moves along it.
+ *
+ * Not to the preview's medium and scene toggles or to the export chips: those
+ * pick which view you are looking at or copy a string, and a raised face on
+ * everything would leave nothing for a raised face to mean. Nor to anything
+ * that cannot be pressed right now — a disabled button keeps the shape and
+ * loses the lip, since standing proud of the page is a promise.
+ */
+.btn3d {
+  border-style: solid;
+  border-width: 1px 1px 3px;
+}
+.btn3d:active {
+  border-width: 3px 1px 1px;
+}
+
+/* Filled with the accent: the lip is the fill's own shadow on Sketchbook, and
+   the light along its lower edge on Studio. */
+.btn3d-fill {
+  background: var(--accent);
+  color: var(--accentInk);
+  border-color: var(--accent) var(--accent) var(--accentLip);
+  transition:
+    background 0.14s ease,
+    border-color 0.14s ease;
+}
 /* Already filled at rest, so hover has to go the other way: down to
    `--accentDeep`, which also takes `--accentInk` from about 2.9:1 to 5.5:1 on
    Sketchbook, where that ink is white — the one state where the label is
-   genuinely comfortable. */
-.pl-clear:hover {
+   genuinely comfortable. The lip stays put, which is why it is not that token
+   but a step under it. */
+.btn3d-fill:hover {
   background: var(--accentDeep);
-  border-color: var(--accentDeep);
+  border-color: var(--accentDeep) var(--accentDeep) var(--accentLip);
+}
+.btn3d-fill:active {
+  border-color: var(--accentLip) var(--accentDeep) var(--accentDeep);
+}
+
+/* Outlined: the same lip under a face that is still the page. The accent is
+   the only colour on it, which is enough to say the button is live without
+   letting it compete with the filled one beside it. */
+.btn3d-line {
+  border-color: var(--line) var(--line) var(--accentLip);
+  transition:
+    color 0.14s ease,
+    border-color 0.14s ease;
+}
+.btn3d-line:hover {
+  color: var(--accent);
+  border-color: var(--accent) var(--accent) var(--accentLip);
+}
+.btn3d-line:active {
+  border-color: var(--accentLip) var(--accent) var(--accent);
 }
 
 /* Chips that do something on click: the export formats. The
@@ -277,7 +338,8 @@ body {
     animation: none;
   }
   .pl-pill,
-  .pl-clear {
+  .btn3d-fill,
+  .btn3d-line {
     transition: none;
   }
   .hv-copy {
